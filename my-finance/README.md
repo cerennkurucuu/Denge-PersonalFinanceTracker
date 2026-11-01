@@ -28,16 +28,10 @@ Denge, Türkçe arayüzlü bir kişisel finans takip uygulamasıdır. Gelir ve g
 
 ```bash
 npm install
-npm start:api
-```
-
-İkinci bir terminalde:
-
-```bash
 npm start
 ```
 
-Angular geliştirme sunucusu `http://localhost:4200` adresinde çalışır ve `/api` isteklerini `http://localhost:3000` adresine yönlendirir. API tek başına `http://localhost:3000/api` adresindedir. SQLite dosyası ilk API başlangıcında `data/finance.sqlite` konumunda oluşturulur ve Git dışında tutulur. Production için önce `npm run build`, sonra `npm run start:prod` çalıştırın.
+`npm start` Express API’yi ve Angular geliştirme sunucusunu birlikte başlatır. Uygulama genellikle `http://localhost:4200`, API `http://localhost:3000/api` adresindedir. 4200 portu doluysa kullanılabilir sonraki port seçilir ve terminalde gösterilir. SQLite dosyası ilk API başlangıcında `data/finance.sqlite` konumunda oluşturulur ve Git dışında tutulur. İstemciyi tek başına çalıştırmak için `npm run start:client`; API’yi tek başına çalıştırmak için `npm run start:api` kullanın. Production için önce `npm run build`, sonra `npm run start:prod` çalıştırın.
 
 ## REST API
 
