@@ -38,6 +38,7 @@ yarn-error.log
 *.sqlite-shm
 *.sqlite-wal
 .env*
+!.env.example
 /libpeerconnection.log
 testem.log
 /typings
