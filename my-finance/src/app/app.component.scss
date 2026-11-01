@@ -6,3 +6,5 @@
 .chart-area canvas{width:100%!important;height:100%!important}.report-bars canvas{width:100%!important;height:100%!important}.donut{background:transparent!important}.donut canvas{position:absolute;inset:0;width:100%!important;height:100%!important;z-index:1}.donut>div{z-index:2}
 
 .metric-subtle{font-size:8px;color:var(--muted);margin-top:4px}.donut{background:transparent!important}
+.form-error{color:#b84e43;background:#fff0ee;border-radius:7px;padding:9px 10px;font-size:10px;line-height:1.4}
+.delete-dialog p{font-size:12px;color:var(--muted);line-height:1.5;margin:18px 0 22px}.delete-confirm{height:34px;border:0;border-radius:8px;background:#d95f55;color:#fff;padding:0 16px;font:600 10px inherit;cursor:pointer}.delete-confirm:hover{background:#c94d45}

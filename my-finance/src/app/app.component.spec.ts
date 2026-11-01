@@ -62,10 +62,12 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
+    fixture.detectChanges();
+    flushPageReads(http);
     component.form = { type: 'Expense', amount: 1.01, description: 'Test market işlemi', category_id: 1, transaction_date: '2026-11-01' };
     component.modal = true;
-
-    component.save();
+    fixture.detectChanges();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.modal-card .quick-add')!.click();
 
     const create = http.expectOne('/api/transactions');
     expect(create.request.method).toBe('POST');
@@ -80,9 +82,12 @@ describe('AppComponent', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
+    fixture.detectChanges();
+    flushPageReads(http);
     component.categoryForm = { id: 0, name: 'Ek ders', type: 'Income', color: '#7c6cf2', icon: 'circle' };
-
-    component.saveCategory();
+    component.categoryModal = true;
+    fixture.detectChanges();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.small-modal .quick-add')!.click();
 
     const create = http.expectOne('/api/categories');
     expect(create.request.method).toBe('POST');
@@ -90,5 +95,23 @@ describe('AppComponent', () => {
     create.flush({ id: 16 });
     flushPageReads(http);
     expect(component.categoryModal).toBeFalse();
+  });
+
+  it('sends transaction deletion only after the in-app confirmation', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const component = fixture.componentInstance;
+    const http = TestBed.inject(HttpTestingController);
+    fixture.detectChanges();
+    flushPageReads(http);
+    component.deletePrompt = { kind: 'transaction', id: 2, label: 'Market' };
+    fixture.detectChanges();
+    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.delete-confirm')!.click();
+
+    const deletion = http.expectOne('/api/transactions/2');
+    expect(deletion.request.method).toBe('DELETE');
+    deletion.flush(null, { status: 204, statusText: 'No Content' });
+    flushPageReads(http);
+    expect(component.deletePrompt).toBeNull();
+    expect(component.notice).toBe('İşlem silindi.');
   });
 });

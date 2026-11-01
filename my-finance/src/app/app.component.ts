@@ -24,7 +24,8 @@ export class AppComponent implements OnInit, AfterViewChecked, OnDestroy {
   active: 'dashboard' | 'transactions' | 'reports' | 'categories' = 'dashboard';
   summary: Summary = { balance:0,income:0,expense:0,monthIncome:0,monthExpense:0,previousMonthIncome:0,previousMonthExpense:0,recent:[],categories:[] };
   transactions: Transaction[] = []; categories: Category[] = []; monthly: Monthly[] = [];
-  loading = true; error = ''; notice = ''; dark = false; modal = false; categoryModal = false; editingId: number | null = null;
+  loading = true; error = ''; modalError = ''; notice = ''; dark = false; modal = false; categoryModal = false; editingId: number | null = null;
+  deletePrompt: { kind: 'transaction'|'category'; id: number; label: string } | null = null;
   filter = 'All'; reportYear = new Date().getFullYear();
   form = { type: 'Expense' as 'Income'|'Expense', amount: '' as string|number, description: '', category_id: 0, transaction_date: this.localDate(new Date()) };
   categoryForm = { id: 0, name: '', type: 'Expense' as 'Income'|'Expense', color: '#7c6cf2', icon: 'circle' };
@@ -92,25 +93,36 @@ export class AppComponent implements OnInit, AfterViewChecked, OnDestroy {
   fmt(cents: number): string { return this.money.format(cents/100); }
   date(value: string): string { const [y,m,d]=value.slice(0,10).split('-'); return `${d}.${m}.${y}`; }
   setPage(page: typeof this.active): void { this.active=page; if(page==='reports')this.loadMonthly(); }
-  openNew(type: 'Income'|'Expense'='Expense'): void { this.editingId=null;this.form={type,amount:'',description:'',category_id:0,transaction_date:this.localDate(new Date())};this.modal=true; }
-  edit(item: Transaction): void { this.editingId=item.id;this.form={type:item.type,amount:(item.amount/100).toFixed(2),description:item.description,category_id:item.category_id,transaction_date:item.transaction_date.slice(0,10)};this.modal=true; }
+  openNew(type: 'Income'|'Expense'='Expense'): void { this.editingId=null;this.modalError='';this.form={type,amount:'',description:'',category_id:0,transaction_date:this.localDate(new Date())};this.modal=true; }
+  edit(item: Transaction): void { this.editingId=item.id;this.modalError='';this.form={type:item.type,amount:(item.amount/100).toFixed(2),description:item.description,category_id:item.category_id,transaction_date:item.transaction_date.slice(0,10)};this.modal=true; }
   save(): void {
+    this.modalError='';
     const amount=this.toCents(this.form.amount);
-    if(!this.form.description.trim()||!this.form.category_id||amount===null||amount<=0||!this.form.transaction_date){this.error='Açıklama, kategori, geçerli tarih ve sıfırdan büyük (en fazla iki ondalık basamaklı) tutar girin.';return;}
+    if(!this.form.description.trim()||!this.form.category_id||amount===null||amount<=0||!this.form.transaction_date){this.modalError='Açıklama, kategori, geçerli tarih ve sıfırdan büyük (en fazla iki ondalık basamaklı) tutar girin.';return;}
     const body={...this.form,amount}; const request=this.editingId?this.http.put(`/api/transactions/${this.editingId}`,body):this.http.post('/api/transactions',body);
-    request.subscribe({next:()=>{this.modal=false;this.notice=this.editingId?'İşlem güncellendi.':'İşlem eklendi.';this.error='';this.load();},error:e=>this.error=e.error?.error||'İşlem kaydedilemedi.'});
+    request.subscribe({next:()=>{this.modal=false;this.modalError='';this.notice=this.editingId?'İşlem güncellendi.':'İşlem eklendi.';this.error='';this.load();},error:e=>this.modalError=e.error?.error||'İşlem kaydedilemedi.'});
   }
-  remove(item: Transaction): void { if(!confirm(`“${item.description}” işlemi silinsin mi?`))return;this.http.delete(`/api/transactions/${item.id}`).subscribe({next:()=>{this.notice='İşlem silindi.';this.load();},error:()=>this.error='İşlem silinemedi.'}); }
+  remove(item: Transaction): void { this.deletePrompt={kind:'transaction',id:item.id,label:item.description}; }
+  removeCategory(category: Category): void { if(category.is_default)return;this.deletePrompt={kind:'category',id:category.id,label:category.name}; }
+  cancelDelete(): void { this.deletePrompt=null; }
+  confirmDelete(): void {
+    const pending=this.deletePrompt;if(!pending)return;
+    const endpoint=pending.kind==='transaction'?`/api/transactions/${pending.id}`:`/api/categories/${pending.id}`;
+    this.http.delete(endpoint).subscribe({
+      next:()=>{this.deletePrompt=null;this.error='';this.notice=pending.kind==='transaction'?'İşlem silindi.':'Kategori silindi.';this.load();},
+      error:e=>{this.deletePrompt=null;this.error=e.error?.error||(pending.kind==='transaction'?'İşlem silinemedi.':'Kategori silinemedi.');}
+    });
+  }
   toggleTheme(): void { this.dark=!this.dark;this.applyTheme();this.http.put('/api/settings',{theme:this.dark?'dark':'light'}).subscribe(); }
   private applyTheme(): void { document.documentElement.dataset['theme']=this.dark?'dark':'light'; }
   saveCategory(): void {
+    this.modalError='';
     const body={name:this.categoryForm.name.trim(),type:this.categoryForm.type,color:this.categoryForm.color,icon:this.categoryForm.icon};
-    if(!body.name){this.error='Kategori adı gerekli.';return;}
+    if(!body.name){this.modalError='Kategori adı gerekli.';return;}
     const request=this.categoryForm.id?this.http.put(`/api/categories/${this.categoryForm.id}`,body):this.http.post('/api/categories',body);
-    request.subscribe({next:()=>{this.categoryModal=false;this.load();this.notice='Kategori kaydedildi.';},error:e=>this.error=e.error?.error||'Kategori kaydedilemedi.'});
+    request.subscribe({next:()=>{this.categoryModal=false;this.modalError='';this.load();this.notice='Kategori kaydedildi.';},error:e=>this.modalError=e.error?.error||'Kategori kaydedilemedi.'});
   }
-  editCategory(category: Category): void { if(category.is_default)return;this.categoryForm={id:category.id,name:category.name,type:category.type,color:category.color,icon:category.icon};this.categoryModal=true; }
-  removeCategory(category: Category): void { if(category.is_default||!confirm(`${category.name} kategorisi silinsin mi?`))return;this.http.delete(`/api/categories/${category.id}`).subscribe({next:()=>this.load(),error:e=>this.error=e.error?.error||'Kategori silinemedi.'}); }
+  editCategory(category: Category): void { if(category.is_default)return;this.modalError='';this.categoryForm={id:category.id,name:category.name,type:category.type,color:category.color,icon:category.icon};this.categoryModal=true; }
   exportCsv(): void {
     const rows=[['Tarih','Tür','Açıklama','Kategori','Tutar (TRY)'],...this.visibleTransactions.map(t=>[this.date(t.transaction_date),t.type==='Income'?'Gelir':'Gider',t.description,t.category,(t.amount/100).toFixed(2)])];
     const csv='\uFEFF'+rows.map(row=>row.map(cell=>`"${String(cell).replaceAll('"','""')}"`).join(';')).join('\r\n');
