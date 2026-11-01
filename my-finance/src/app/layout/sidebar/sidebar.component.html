@@ -1,0 +1,16 @@
+<aside class="sidebar">
+  <a class="brand" href="#" (click)="$event.preventDefault(); selectPage('dashboard')">
+    <span class="brand-mark">d</span><span>Denge<small>Finansal yaşamın</small></span>
+  </a>
+  <div class="nav-label">MENÜ</div>
+  <nav aria-label="Ana menü">
+    <button [class.active]="active==='dashboard'" (click)="selectPage('dashboard')"><span class="nav-icon">⌂</span> Genel Bakış</button>
+    <button [class.active]="active==='transactions'" (click)="selectPage('transactions')"><span class="nav-icon">↕</span> İşlemler</button>
+    <button [class.active]="active==='reports'" (click)="selectPage('reports')"><span class="nav-icon">▥</span> Raporlar</button>
+    <button [class.active]="active==='categories'" (click)="selectPage('categories')"><span class="nav-icon">◈</span> Kategoriler</button>
+  </nav>
+  <div class="sidebar-bottom">
+    <div class="support-card"><span class="support-orb">✳</span><strong>Kontrol sende.</strong><p>Finansal hedeflerine bir adım daha yaklaş.</p></div>
+    <div class="profile"><div class="avatar">{{user.name.slice(0,1)||'D'}}</div><div><strong>{{user.name}}</strong><small>{{user.email}}</small></div><span class="more">···</span></div>
+  </div>
+</aside>

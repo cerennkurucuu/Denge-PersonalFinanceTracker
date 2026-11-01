@@ -1,0 +1,24 @@
+@if (auth.loading) {
+  <main class="auth-screen">
+    <div class="auth-card auth-loading-card">
+      <span class="brand-mark">d</span>
+      <p>Güvenli oturum kontrol ediliyor…</p>
+    </div>
+  </main>
+} @else {
+  <main class="auth-screen">
+    <section class="auth-card">
+      <span class="brand-mark">d</span>
+      <div class="eyebrow">KİŞİSEL FİNANSIN, SENİN KONTROLÜNDE</div>
+      <h1>Denge’ye hoş geldin</h1>
+      <p class="auth-description">Finansal kayıtların yalnızca Google hesabınla giriş yaptığında sana özel açılır.</p>
+      @if (auth.googleClientId) {
+        <div #googleButton class="google-button"></div>
+      } @else {
+        <div class="auth-config-note">Google girişi henüz yapılandırılmadı. Sunucuya Google OAuth Web Client ID eklendiğinde giriş açılacak.</div>
+      }
+      @if (auth.error) { <div class="form-error" role="alert">{{ auth.error }}</div> }
+      <small class="privacy-note">Kayıtların diğer hesaplardan ayrı tutulur ve yalnızca bu oturumla erişilebilir.</small>
+    </section>
+  </main>
+}
