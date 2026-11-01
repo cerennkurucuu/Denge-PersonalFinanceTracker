@@ -26,14 +26,15 @@ export class AppComponent implements OnInit, AfterViewChecked, OnDestroy {
   transactions: Transaction[] = []; categories: Category[] = []; monthly: Monthly[] = [];
   loading = true; error = ''; notice = ''; dark = false; modal = false; categoryModal = false; editingId: number | null = null;
   filter = 'All'; reportYear = new Date().getFullYear();
-  form = { type: 'Expense' as 'Income'|'Expense', amount: '', description: '', category_id: 0, transaction_date: this.localDate(new Date()) };
+  form = { type: 'Expense' as 'Income'|'Expense', amount: '' as string|number, description: '', category_id: 0, transaction_date: this.localDate(new Date()) };
   categoryForm = { id: 0, name: '', type: 'Expense' as 'Income'|'Expense', color: '#7c6cf2', icon: 'circle' };
   readonly months = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
   readonly currentDate = this.localDate(new Date());
   readonly money = new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY',maximumFractionDigits:2});
   private localDate(date: Date): string { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
-  toCents(value: string): number | null {
-    const normalized=value.trim().replace(',','.');
+  toCents(value: string|number|null): number | null {
+    if(value===null)return null;
+    const normalized=String(value).trim().replace(',','.');
     if(!/^\d+(?:\.\d{1,2})?$/.test(normalized))return null;
     const [whole,fraction='']=normalized.split('.');
     const cents=Number(whole)*100+Number(fraction.padEnd(2,'0'));
