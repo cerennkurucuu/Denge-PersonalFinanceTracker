@@ -21,6 +21,10 @@ export class DashboardPageComponent implements AfterViewChecked, OnDestroy {
   @ViewChild('flowChart') private flowCanvas?: ElementRef<HTMLCanvasElement>;
   @ViewChild('categoryChart') private categoryCanvas?: ElementRef<HTMLCanvasElement>;
 
+  get fullName(): string {
+    return this.user?.name.trim() || 'Denge kullanıcısı';
+  }
+
   ngAfterViewChecked(): void {
     this.charts.syncMonthly('flow', this.flowCanvas?.nativeElement, this.finance.monthly, this.format);
     this.charts.syncCategories(this.categoryCanvas?.nativeElement, this.finance.summary.categories, this.format);

@@ -1,4 +1,64 @@
-<section class="welcome-row"><div><div class="eyebrow">PARANIN BÜYÜK RESMİ</div><h1>Raporlar</h1><p>Finansal alışkanlıklarını keşfet, daha iyi kararlar al.</p></div><label class="year-select">Yıl <select [(ngModel)]="finance.reportYear" (change)="yearChanged()"><option [ngValue]="2026">2026</option><option [ngValue]="2025">2025</option><option [ngValue]="2024">2024</option></select></label></section>
-<section class="metrics-grid report-metrics"><article class="metric-card"><div class="metric-head">Yıllık gelir <span class="income-symbol">↙</span></div><strong>{{format.formatAmount(finance.yearIncome)}}</strong><div class="metric-foot">{{finance.reportYear}} toplamı</div></article><article class="metric-card"><div class="metric-head">Yıllık gider <span class="expense-symbol">↗</span></div><strong>{{format.formatAmount(finance.yearExpense)}}</strong><div class="metric-foot">{{finance.reportYear}} toplamı</div></article><article class="metric-card"><div class="metric-head">Net tasarruf <span class="savings-symbol">✳</span></div><strong>{{format.formatAmount(finance.yearSavings)}}</strong><div class="metric-foot">Gelir − gider</div></article></section>
-<section class="panel report-chart"><div class="panel-heading"><div><h2>Aylık karşılaştırma</h2><p>Gelir ve gider hareketleri · {{finance.reportYear}}</p></div></div><div class="report-bars"><canvas #reportChart aria-label="Yıllık aylık gelir ve gider karşılaştırması"></canvas></div><div class="legend"><span><i class="legend-income"></i>Gelir</span><span><i class="legend-expense"></i>Gider</span></div></section>
-<section class="panel category-report"><div class="panel-heading"><div><h2>Kategori analizi</h2><p>Bu ay en çok harcama yapılan alanlar</p></div></div>@for(cat of finance.summary.categories;track cat.name){<div class="category-progress"><span class="category-dot" [style.background]="cat.color"></span><span>{{cat.name}}</span><div class="progress-track"><i [style.background]="cat.color" [style.width.%]="cat.amount/(finance.summary.categories[0].amount||1)*100"></i></div><strong>{{format.formatAmount(cat.amount)}}</strong></div>}@empty{<p class="empty-copy">Henüz kategori verisi yok.</p>}</section>
+<header class="welcome-row report-heading" aria-labelledby="reports-title">
+  <div>
+    <div class="eyebrow">PARANIN BÜYÜK RESMİ</div>
+    <h1 id="reports-title">Finansal raporların</h1>
+    <p>Gelirini, harcamalarını ve birikim eğilimini dönemlere göre incele.</p>
+  </div>
+  <label class="year-select" for="report-year">Rapor yılı
+    <select id="report-year" [(ngModel)]="finance.reportYear" (change)="yearChanged()">
+      @for (year of availableYears; track year) { <option [ngValue]="year">{{ year }}</option> }
+    </select>
+  </label>
+</header>
+
+<section class="report-summary" aria-label="Yıllık finans özeti">
+  <article class="metric-card" aria-labelledby="annual-income-title">
+    <h2 id="annual-income-title" class="metric-label">Yıllık gelir <span class="metric-symbol income-symbol" aria-hidden="true">↙</span></h2>
+    <p class="metric-value">{{ format.formatAmount(finance.yearIncome) }}</p>
+    <p class="metric-foot">{{ finance.reportYear }} yılı toplamı</p>
+  </article>
+  <article class="metric-card" aria-labelledby="annual-expense-title">
+    <h2 id="annual-expense-title" class="metric-label">Yıllık gider <span class="metric-symbol expense-symbol" aria-hidden="true">↗</span></h2>
+    <p class="metric-value">{{ format.formatAmount(finance.yearExpense) }}</p>
+    <p class="metric-foot">{{ finance.reportYear }} yılı toplamı</p>
+  </article>
+  <article class="metric-card savings-metric" aria-labelledby="annual-savings-title">
+    <h2 id="annual-savings-title" class="metric-label">Net birikim <span class="metric-symbol savings-symbol" aria-hidden="true">✳</span></h2>
+    <p class="metric-value" [class.negative-value]="finance.yearSavings < 0">{{ format.formatAmount(finance.yearSavings) }}</p>
+    <p class="metric-foot">Yıllık gelir ve gider farkı</p>
+  </article>
+</section>
+
+<div class="report-analysis-grid">
+  <section class="panel report-chart" aria-labelledby="monthly-comparison-title">
+    <header class="panel-heading">
+      <div><h2 id="monthly-comparison-title">Aylık gelir ve gider</h2><p>{{ finance.reportYear }} yılı · aylara göre karşılaştırma</p></div>
+      <span class="report-period">12 ay</span>
+    </header>
+    <div class="report-chart-canvas">
+      <canvas #reportChart role="img" [attr.aria-label]="finance.reportYear + ' yılı aylık gelir ve gider grafiği'"></canvas>
+    </div>
+    <div class="legend" aria-label="Grafik açıklaması"><span><i class="legend-income" aria-hidden="true"></i>Gelir</span><span><i class="legend-expense" aria-hidden="true"></i>Gider</span></div>
+  </section>
+
+  <section class="panel category-report" aria-labelledby="category-analysis-title">
+    <header class="panel-heading"><div><h2 id="category-analysis-title">Harcama kategorileri</h2><p>Bu ay en çok harcama yapılan alanlar</p></div></header>
+    @if (finance.summary.categories.length) {
+      <ol class="category-progress-list">
+        @for (category of finance.summary.categories; track category.name) {
+          <li class="category-progress">
+            <span class="category-dot" [style.background]="category.color" aria-hidden="true"></span>
+            <div class="category-progress-details">
+              <div class="category-progress-heading"><h3>{{ category.name }}</h3><strong>{{ format.formatAmount(category.amount) }}</strong></div>
+              <div class="progress-track" role="img" [attr.aria-label]="category.name + ', en yüksek kategori harcamasının yüzde ' + categoryShare(category.amount) + ' kadarı'">
+                <span [style.background]="category.color" [style.width.%]="categoryShare(category.amount)"></span>
+              </div>
+            </div>
+          </li>
+        }
+      </ol>
+    } @else {
+      <div class="report-empty"><span aria-hidden="true">◈</span><h3>Henüz kategori harcaması yok</h3><p>Bu ay işlem ekledikçe kategori dağılımı burada görünecek.</p></div>
+    }
+  </section>
+</div>

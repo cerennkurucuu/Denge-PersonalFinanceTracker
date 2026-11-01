@@ -1,22 +1,84 @@
-<section class="welcome-row">
-  <div><div class="eyebrow"><span class="live-dot"></span> FİNANSAL ÖZETİN</div><h1>{{user.name.trim().split(' ')[0]}} <span>✳</span></h1><p>Paranın nereye gittiğini bilmek, nereye gideceğini seçmektir.</p></div>
-  <button class="outline-button" (click)="goTo('reports')">Raporları gör <span>↗</span></button>
-</section>
+<header class="welcome-row" aria-labelledby="dashboard-title">
+  <div class="welcome-copy">
+    <div class="eyebrow"><span class="live-dot" aria-hidden="true"></span> FİNANSAL ÖZETİN</div>
+    <h1 id="dashboard-title">Hoş geldin, {{ fullName }}</h1>
+    <p>Paranın nereye gittiğini bilmek, nereye gideceğini seçmektir.</p>
+  </div>
+  <button class="outline-button" type="button" (click)="goTo('reports')">Raporları gör <span aria-hidden="true">↗</span></button>
+</header>
 
 @if (finance.loading) {
-  <div class="loading-card">Finansal verilerin yükleniyor…</div>
+  <p class="loading-card" role="status">Finansal verilerin yükleniyor…</p>
 } @else {
-  <section class="metrics-grid">
-    <article class="metric-card balance-card"><div class="metric-head"><span>Toplam bakiye</span><span class="metric-symbol">◉</span></div><strong class="balance-value">{{format.formatAmount(finance.summary.balance)}}</strong><div class="balance-foot"><span class="balance-dot"></span>Tüm zamanların net durumu<span class="balance-spark">↗</span></div><div class="balance-decoration"></div></article>
-    <article class="metric-card"><div class="metric-head"><span>Bu ay gelir</span><span class="metric-symbol income-symbol">↙</span></div><strong>{{format.formatAmount(finance.summary.monthIncome)}}</strong><div class="metric-foot">{{format.monthChange(finance.summary.monthIncome,finance.summary.previousMonthIncome)}}</div><div class="metric-subtle">Toplam {{format.formatAmount(finance.summary.income)}}</div></article>
-    <article class="metric-card"><div class="metric-head"><span>Bu ay gider</span><span class="metric-symbol expense-symbol">↗</span></div><strong>{{format.formatAmount(finance.summary.monthExpense)}}</strong><div class="metric-foot">{{format.monthChange(finance.summary.monthExpense,finance.summary.previousMonthExpense)}}</div><div class="metric-subtle">Toplam {{format.formatAmount(finance.summary.expense)}}</div></article>
-    <article class="metric-card savings-card"><div class="metric-head"><span>Aylık tasarruf</span><span class="metric-symbol savings-symbol">✳</span></div><strong>{{format.formatAmount(finance.monthSavings)}}</strong><div class="metric-foot"><span class="pill" [class.positive]="finance.monthSavings>=0" [class.negative]="finance.monthSavings<0">{{finance.monthSavings>=0?'↗':'↘'}}</span> Gelir ve gider farkı</div></article>
+  <section class="metrics-grid" aria-label="Finansal özet">
+    <article class="metric-card balance-card" aria-labelledby="balance-title">
+      <h2 id="balance-title" class="metric-head">Toplam bakiye <span class="metric-symbol" aria-hidden="true">◉</span></h2>
+      <p class="metric-value">{{ format.formatAmount(finance.summary.balance) }}</p>
+      <p class="balance-foot"><span class="balance-dot" aria-hidden="true"></span>Tüm zamanların net durumu<span class="balance-spark" aria-hidden="true">↗</span></p>
+      <div class="balance-decoration" aria-hidden="true"></div>
+    </article>
+    <article class="metric-card" aria-labelledby="month-income-title">
+      <h2 id="month-income-title" class="metric-head">Bu ay gelir <span class="metric-symbol income-symbol" aria-hidden="true">↙</span></h2>
+      <p class="metric-value">{{ format.formatAmount(finance.summary.monthIncome) }}</p>
+      <p class="metric-foot">{{ format.monthChange(finance.summary.monthIncome, finance.summary.previousMonthIncome) }}</p>
+      <p class="metric-subtle">Toplam {{ format.formatAmount(finance.summary.income) }}</p>
+    </article>
+    <article class="metric-card" aria-labelledby="month-expense-title">
+      <h2 id="month-expense-title" class="metric-head">Bu ay gider <span class="metric-symbol expense-symbol" aria-hidden="true">↗</span></h2>
+      <p class="metric-value">{{ format.formatAmount(finance.summary.monthExpense) }}</p>
+      <p class="metric-foot">{{ format.monthChange(finance.summary.monthExpense, finance.summary.previousMonthExpense) }}</p>
+      <p class="metric-subtle">Toplam {{ format.formatAmount(finance.summary.expense) }}</p>
+    </article>
+    <article class="metric-card savings-card" aria-labelledby="month-savings-title">
+      <h2 id="month-savings-title" class="metric-head">Aylık tasarruf <span class="metric-symbol savings-symbol" aria-hidden="true">✳</span></h2>
+      <p class="metric-value">{{ format.formatAmount(finance.monthSavings) }}</p>
+      <p class="metric-foot"><span class="pill" [class.positive]="finance.monthSavings >= 0" [class.negative]="finance.monthSavings < 0">{{ finance.monthSavings >= 0 ? '↗' : '↘' }}</span> Gelir ve gider farkı</p>
+    </article>
   </section>
 
-  <section class="insights-grid">
-    <article class="panel flow-panel"><div class="panel-heading"><div><h2>Gelir & gider akışı</h2><p>Bu yılın aylık görünümü</p></div><button class="select-chip" (click)="goTo('reports')">{{finance.reportYear}} <span>⌄</span></button></div><div class="legend"><span><i class="legend-income"></i>Gelir</span><span><i class="legend-expense"></i>Gider</span></div><div class="chart-area"><canvas #flowChart aria-label="Aylık gelir ve gider grafiği"></canvas></div></article>
-    <article class="panel category-panel"><div class="panel-heading"><div><h2>Harcama dağılımı</h2><p>Bu ay kategorilere göre</p></div><span class="small-dots">···</span></div><div class="donut-wrap"><div class="donut"><canvas #categoryChart aria-label="Kategori harcama dağılımı"></canvas><div><strong>{{format.formatAmount(finance.summary.monthExpense)}}</strong><small>Toplam gider</small></div></div><div class="category-legend">@for(cat of finance.summary.categories.slice(0,4);track cat.name){<div><i [style.background]="cat.color"></i><span>{{cat.name}}</span><strong>{{format.formatAmount(cat.amount)}}</strong></div>}@if (!finance.summary.categories.length) {<p class="empty-copy">Bu ay henüz harcama yok.</p>}</div></div><button class="text-link" (click)="goTo('reports')">Detaylı analizi gör <span>→</span></button></article>
+  <section class="insights-grid" aria-label="Gelir, gider ve harcama grafikleri">
+    <article class="panel flow-panel" aria-labelledby="flow-title">
+      <div class="panel-heading">
+        <div><h2 id="flow-title">Gelir ve gider akışı</h2><p>Bu yılın aylık görünümü</p></div>
+        <button class="select-chip" type="button" (click)="goTo('reports')">{{ finance.reportYear }} <span aria-hidden="true">⌄</span></button>
+      </div>
+      <div class="legend" aria-label="Grafik açıklaması"><span><i class="legend-income" aria-hidden="true"></i>Gelir</span><span><i class="legend-expense" aria-hidden="true"></i>Gider</span></div>
+      <div class="chart-area"><canvas #flowChart role="img" aria-label="Aylık gelir ve gider grafiği"></canvas></div>
+    </article>
+
+    <article class="panel category-panel" aria-labelledby="spending-title">
+      <div class="panel-heading"><div><h2 id="spending-title">Harcama dağılımı</h2><p>Bu ay kategorilere göre</p></div><span class="small-dots" aria-hidden="true">···</span></div>
+      <div class="donut-wrap">
+        <div class="donut">
+          <canvas #categoryChart role="img" aria-label="Kategori bazlı harcama dağılımı"></canvas>
+          <div><strong>{{ format.formatAmount(finance.summary.monthExpense) }}</strong><small>Toplam gider</small></div>
+        </div>
+        <div class="category-legend">
+          @for (category of finance.summary.categories.slice(0, 4); track category.name) {
+            <div><i [style.background]="category.color" aria-hidden="true"></i><span>{{ category.name }}</span><strong>{{ format.formatAmount(category.amount) }}</strong></div>
+          }
+          @if (!finance.summary.categories.length) { <p class="empty-copy">Bu ay henüz harcama yok.</p> }
+        </div>
+      </div>
+      <button class="text-link" type="button" (click)="goTo('reports')">Detaylı analizi gör <span aria-hidden="true">→</span></button>
+    </article>
   </section>
 
-  <section class="panel transactions-panel"><div class="panel-heading"><div><h2>Son işlemler</h2><p>Hesabındaki son hareketler</p></div><button class="text-link" (click)="goTo('transactions')">Tüm işlemler <span>→</span></button></div><div class="transaction-list">@for(item of finance.summary.recent;track item.id){<div class="transaction-row"><span class="category-icon" [style.background]="item.category_color+'20'" [style.color]="item.category_color">{{item.type==='Income'?'↙':'↗'}}</span><div class="transaction-name"><strong>{{item.description}}</strong><small>{{item.category}} · {{format.formatDate(item.transaction_date)}}</small></div><strong class="transaction-amount" [class.income-text]="item.type==='Income'">{{item.type==='Income'?'+':'−'}}{{format.formatAmount(item.amount)}}</strong><button class="row-more" (click)="editTransaction(item)" aria-label="Düzenle">···</button></div>}@if (!finance.summary.recent.length) {<div class="empty-state"><span>✳</span><strong>İlk adımı at</strong><p>İlk işlemini eklediğinde finansal görünümün burada belirecek.</p><button class="quick-add" (click)="openNewTransaction()">＋ İşlem ekle</button></div>}</div></section>
+  <section class="panel transactions-panel" aria-labelledby="recent-transactions-title">
+    <div class="panel-heading"><div><h2 id="recent-transactions-title">Son işlemler</h2><p>Hesabındaki son hareketler</p></div><button class="text-link" type="button" (click)="goTo('transactions')">Tüm işlemler <span aria-hidden="true">→</span></button></div>
+    @if (finance.summary.recent.length) {
+      <ul class="transaction-list" aria-label="Son finansal işlemler">
+        @for (item of finance.summary.recent; track item.id) {
+          <li class="transaction-row">
+            <span class="category-icon" [style.background]="item.category_color + '20'" [style.color]="item.category_color" aria-hidden="true">{{ item.type === 'Income' ? '↙' : '↗' }}</span>
+            <div class="transaction-name"><strong>{{ item.description }}</strong><small>{{ item.category }} · {{ format.formatDate(item.transaction_date) }}</small></div>
+            <strong class="transaction-amount" [class.income-text]="item.type === 'Income'">{{ item.type === 'Income' ? '+' : '−' }}{{ format.formatAmount(item.amount) }}</strong>
+            <button class="row-more" type="button" (click)="editTransaction(item)" [attr.aria-label]="item.description + ' işlemini düzenle'">···</button>
+          </li>
+        }
+      </ul>
+    } @else {
+      <div class="empty-state"><span aria-hidden="true">✳</span><h3>İlk adımı at</h3><p>İlk işlemini eklediğinde finansal görünümün burada belirecek.</p><button class="quick-add" type="button" (click)="openNewTransaction()">＋ İşlem ekle</button></div>
+    }
+  </section>
 }

@@ -1,1 +1,49 @@
-:host{display:block}.report-metrics{grid-template-columns:repeat(3,1fr)}.report-chart,.category-report{margin-bottom:14px}.report-bars{height:230px;padding:14px 0 0}.report-bars canvas{width:100%!important;height:100%!important}.legend{display:flex;justify-content:flex-end;gap:13px;font-size:8px;color:var(--muted);margin-top:12px}.legend span{display:flex;align-items:center;gap:5px}.legend i{width:7px;height:7px;border-radius:2px;display:inline-block}.legend-income{background:#8172e8}.legend-expense{background:#b8b0f5}.category-progress{display:grid;grid-template-columns:8px 110px 1fr 85px;gap:9px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);font-size:9px}.category-dot{width:8px;height:8px;border-radius:50%}.category-progress strong{text-align:right;font-size:9px}.progress-track{height:5px;border-radius:5px;background:var(--canvas);overflow:hidden}.progress-track i{display:block;height:100%;border-radius:5px}.year-select{color:var(--muted);font-size:10px}.year-select select{margin-left:8px;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:7px;color:var(--ink)}@media(max-width:640px){.report-metrics{grid-template-columns:1fr}.report-bars{height:170px}.category-progress{grid-template-columns:8px 75px 1fr 70px}}
+:host { display: block; }
+
+.report-heading { align-items: flex-end; }
+.report-heading > div { min-width: 0; }
+.year-select { display: grid; min-width: 150px; gap: 7px; color: var(--muted); font-size: .8125rem; font-weight: 600; }
+.year-select select { min-height: 42px; padding: 0 34px 0 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+
+.report-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
+.report-summary .metric-card { min-height: 142px; }
+.report-summary .metric-value { font-size: clamp(1.375rem, 2.2vw, 1.75rem); }
+.savings-metric { border-color: #dcebd1; background: linear-gradient(145deg, var(--surface), color-mix(in srgb, #eff6e9 55%, var(--surface))); }
+.negative-value { color: var(--danger); }
+
+.report-analysis-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .95fr); align-items: stretch; gap: 16px; }
+.report-chart, .category-report { min-width: 0; min-height: 390px; }
+.report-chart { display: flex; flex-direction: column; }
+.report-period { flex: 0 0 auto; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: .75rem; }
+.report-chart-canvas { position: relative; min-height: 270px; flex: 1; margin-top: 20px; }
+.report-chart-canvas canvas { width: 100% !important; height: 100% !important; }
+
+.category-progress-list { display: grid; gap: 4px; margin: 20px 0 0; padding: 0; list-style: none; }
+.category-progress { display: flex; align-items: flex-start; gap: 11px; padding: 13px 0; border-top: 1px solid var(--line); }
+.category-dot { width: 10px; height: 10px; flex: 0 0 auto; margin-top: 5px; border-radius: 50%; }
+.category-progress-details { min-width: 0; flex: 1; }
+.category-progress-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.category-progress-heading h3 { overflow: hidden; color: var(--ink); font-size: .8125rem; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.category-progress-heading strong { flex: 0 0 auto; font-size: .8125rem; font-weight: 650; white-space: nowrap; }
+.progress-track { height: 7px; margin-top: 9px; overflow: hidden; border-radius: 99px; background: var(--canvas); }
+.progress-track span { display: block; height: 100%; border-radius: inherit; transition: width .25s ease; }
+.report-empty { display: grid; justify-items: center; gap: 9px; padding: 54px 14px; text-align: center; }
+.report-empty > span { display: grid; width: 42px; height: 42px; place-items: center; border-radius: 13px; background: var(--accent-soft); color: var(--accent); font-size: 1.25rem; }
+.report-empty h3 { margin-top: 3px; }
+.report-empty p { max-width: 34ch; font-size: .8125rem; }
+
+@media (max-width: 950px) {
+  .report-analysis-grid { grid-template-columns: 1fr; }
+  .report-chart, .category-report { min-height: auto; }
+  .report-chart-canvas { min-height: 270px; }
+}
+
+@media (max-width: 640px) {
+  .report-heading { flex-direction: column; align-items: stretch; }
+  .year-select { min-width: 0; }
+  .report-summary { grid-template-columns: 1fr; gap: 10px; }
+  .report-summary .metric-card { min-height: 116px; padding: 16px; }
+  .report-summary .metric-value { margin-top: 10px; font-size: 1.375rem; }
+  .report-chart-canvas { min-height: 230px; margin-top: 12px; }
+  .report-period { font-size: .75rem; }
+}

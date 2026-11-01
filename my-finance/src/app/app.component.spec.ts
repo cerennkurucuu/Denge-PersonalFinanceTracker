@@ -69,7 +69,7 @@ describe('AppComponent', () => {
     expect(format.toCents('1.005')).toBeNull();
   });
 
-  it('posts a numeric transaction amount as integer kuruş and refreshes data', () => {
+  it('posts a numeric transaction amount as integer kuruş and refreshes data', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
@@ -78,7 +78,11 @@ describe('AppComponent', () => {
     finance.transactionForm = { type: 'Expense', amount: 1.01, description: 'Test market işlemi', category_id: 1, transaction_date: '2026-11-01' };
     finance.transactionModal = true;
     fixture.detectChanges();
-    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.modal-card .quick-add')!.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const form = (fixture.nativeElement as HTMLElement).querySelector<HTMLFormElement>('form.modal-card')!;
+    expect(form.checkValidity()).toBeTrue();
+    form.querySelector<HTMLButtonElement>('.quick-add')!.click();
 
     const create = http.expectOne('/api/transactions');
     expect(create.request.method).toBe('POST');
@@ -89,7 +93,7 @@ describe('AppComponent', () => {
     expect(finance.notice).toBe('İşlem eklendi.');
   });
 
-  it('posts a new income category and refreshes data', () => {
+  it('posts a new income category and refreshes data', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
@@ -98,7 +102,11 @@ describe('AppComponent', () => {
     finance.categoryForm = { id: 0, name: 'Ek ders', type: 'Income', color: '#7c6cf2', icon: 'circle' };
     finance.categoryModal = true;
     fixture.detectChanges();
-    (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.small-modal .quick-add')!.click();
+    await fixture.whenStable();
+    fixture.detectChanges();
+    const form = (fixture.nativeElement as HTMLElement).querySelector<HTMLFormElement>('form.small-modal')!;
+    expect(form.checkValidity()).toBeTrue();
+    form.querySelector<HTMLButtonElement>('.quick-add')!.click();
 
     const create = http.expectOne('/api/categories');
     expect(create.request.method).toBe('POST');
