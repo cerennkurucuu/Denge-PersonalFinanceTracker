@@ -21,4 +21,11 @@ describe('AppComponent', () => {
     const component = TestBed.createComponent(AppComponent).componentInstance;
     expect(component.fmt(123456)).toContain('1.234,56');
   });
+
+  it('converts decimal amounts to kuruş without floating-point rounding', () => {
+    const component = TestBed.createComponent(AppComponent).componentInstance;
+    expect(component.toCents('1.01')).toBe(101);
+    expect(component.toCents('1,5')).toBe(150);
+    expect(component.toCents('1.005')).toBeNull();
+  });
 });

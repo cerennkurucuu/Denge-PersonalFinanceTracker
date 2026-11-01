@@ -72,11 +72,12 @@ app.delete('/api/categories/:id', (req, res) => {
   const category = db.prepare('SELECT * FROM categories WHERE id=?').get(Number(req.params.id)); if (!category) return fail(res, 404, 'Kategori bulunamadı.');
   if (category.is_default) return fail(res, 400, 'Varsayılan kategori silinemez.');
   try { db.prepare('DELETE FROM categories WHERE id=?').run(category.id); return res.status(204).end(); }
-  catch (error) { if (error.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') return fail(res, 409, 'Bu kategori işlemlerde kullanılıyor.'); throw error; }
+  catch (error) { if (error.code?.startsWith('SQLITE_CONSTRAINT')) return fail(res, 409, 'Bu kategori işlemlerde kullanılıyor.'); throw error; }
 });
 app.get('/api/dashboard/summary', (_req, res) => {
   const totals = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='Income' THEN amount ELSE 0 END),0) income, COALESCE(SUM(CASE WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions").get();
-  const month = new Date().toISOString().slice(0, 7); const previous = new Date(); previous.setUTCMonth(previous.getUTCMonth() - 1); const priorMonth = previous.toISOString().slice(0, 7);
+  const monthParts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit' }).formatToParts(new Date()).map(part => [part.type, part.value]));
+  const month = `${monthParts.year}-${monthParts.month}`; const previous = new Date(`${month}-01T00:00:00Z`); previous.setUTCMonth(previous.getUTCMonth() - 1); const priorMonth = previous.toISOString().slice(0, 7);
   const monthTotals = db.prepare("SELECT COALESCE(SUM(CASE WHEN type='Income' THEN amount ELSE 0 END),0) income, COALESCE(SUM(CASE WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE transaction_date LIKE ?");
   const monthly = monthTotals.get(`${month}%`); const prior = monthTotals.get(`${priorMonth}%`);
   const recent = db.prepare(`${transactionSelect} ORDER BY t.transaction_date DESC,t.id DESC LIMIT 6`).all();

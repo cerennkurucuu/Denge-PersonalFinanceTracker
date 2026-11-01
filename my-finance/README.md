@@ -17,7 +17,7 @@ Denge, Türkçe arayüzlü bir kişisel finans takip uygulamasıdır. Gelir ve g
 - Express.js REST API, Node.js ve `better-sqlite3`
 - SQLite migration dosyaları `server/migrations/` altında bulunur. Tutarlar integer kuruş olarak saklanır; bakiye ayrı bir tabloda tutulmaz.
 - İstemci tarafı rendering kullanılır. Angular SSR kaldırılmıştır; sunucu uygulaması Express API ve production statik dosyalarını sunar.
-- Grafikler bağımlılıksız, responsive CSS grafik bileşenleriyle çizilir.
+- Aylık gelir/gider ve kategori dağılımı grafikleri responsive Chart.js bileşenleriyle çizilir.
 
 ## Gereksinimler
 

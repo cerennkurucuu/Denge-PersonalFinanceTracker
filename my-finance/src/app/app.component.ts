@@ -1,7 +1,8 @@
 import { CommonModule } from '@angular/common';
 import { HttpClient } from '@angular/common/http';
-import { Component, OnInit, inject } from '@angular/core';
+import { AfterViewChecked, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import type { Chart, ChartConfiguration } from 'chart.js';
 
 interface Category { id: number; name: string; type: 'Income' | 'Expense'; color: string; icon: string; is_default: number; }
 interface Transaction { id: number; type: 'Income' | 'Expense'; amount: number; description: string; category_id: number; category: string; category_color: string; transaction_date: string; }
@@ -12,19 +13,59 @@ interface Monthly { month: string; income: number; expense: number; }
   selector: 'app-root', standalone: true, imports: [CommonModule, FormsModule],
   templateUrl: './app.component.html', styleUrl: './app.component.scss'
 })
-export class AppComponent implements OnInit {
+export class AppComponent implements OnInit, AfterViewChecked, OnDestroy {
   private readonly http = inject(HttpClient);
+  @ViewChild('flowChart') private flowCanvas?: ElementRef<HTMLCanvasElement>;
+  @ViewChild('categoryChart') private categoryCanvas?: ElementRef<HTMLCanvasElement>;
+  @ViewChild('reportChart') private reportCanvas?: ElementRef<HTMLCanvasElement>;
+  private readonly charts: Partial<Record<'flow'|'category'|'report', Chart<any, any, any>>> = {};
+  private readonly chartSignatures: Partial<Record<'flow'|'category'|'report', string>> = {};
+  private chartRegistered = false;
   active: 'dashboard' | 'transactions' | 'reports' | 'categories' = 'dashboard';
   summary: Summary = { balance:0,income:0,expense:0,monthIncome:0,monthExpense:0,previousMonthIncome:0,previousMonthExpense:0,recent:[],categories:[] };
   transactions: Transaction[] = []; categories: Category[] = []; monthly: Monthly[] = [];
   loading = true; error = ''; notice = ''; dark = false; modal = false; categoryModal = false; editingId: number | null = null;
   filter = 'All'; reportYear = new Date().getFullYear();
-  form = { type: 'Expense' as 'Income'|'Expense', amount: '', description: '', category_id: 0, transaction_date: new Date().toISOString().slice(0,10) };
+  form = { type: 'Expense' as 'Income'|'Expense', amount: '', description: '', category_id: 0, transaction_date: this.localDate(new Date()) };
   categoryForm = { id: 0, name: '', type: 'Expense' as 'Income'|'Expense', color: '#7c6cf2', icon: 'circle' };
   readonly months = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
-  readonly currentDate = new Date().toISOString();
+  readonly currentDate = this.localDate(new Date());
   readonly money = new Intl.NumberFormat('tr-TR',{style:'currency',currency:'TRY',maximumFractionDigits:2});
+  private localDate(date: Date): string { return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; }
+  toCents(value: string): number | null {
+    const normalized=value.trim().replace(',','.');
+    if(!/^\d+(?:\.\d{1,2})?$/.test(normalized))return null;
+    const [whole,fraction='']=normalized.split('.');
+    const cents=Number(whole)*100+Number(fraction.padEnd(2,'0'));
+    return Number.isSafeInteger(cents)?cents:null;
+  }
   ngOnInit(): void { this.load(); this.http.get<{theme:string}>('/api/settings').subscribe({next:s=>{this.dark=s.theme==='dark';this.applyTheme();}}); }
+  ngAfterViewChecked(): void {
+    this.syncChart('flow', this.flowCanvas?.nativeElement, this.monthly, () => this.monthlyConfig());
+    this.syncChart('category', this.categoryCanvas?.nativeElement, this.summary.categories, () => this.categoryConfig());
+    this.syncChart('report', this.reportCanvas?.nativeElement, this.monthly, () => this.monthlyConfig());
+  }
+  ngOnDestroy(): void { Object.values(this.charts).forEach(chart=>chart?.destroy()); }
+  private syncChart(key: 'flow'|'category'|'report', canvas: HTMLCanvasElement|undefined, data: unknown, config: () => ChartConfiguration<any, any, any>): void {
+    if (!canvas) { this.charts[key]?.destroy(); delete this.charts[key]; delete this.chartSignatures[key]; return; }
+    const signature=JSON.stringify(data);
+    if (signature===this.chartSignatures[key]) return;
+    this.chartSignatures[key]=signature;
+    void import('chart.js').then(({ArcElement,BarController,BarElement,CategoryScale,Chart,DoughnutController,LinearScale,Tooltip})=>{
+      if (!canvas.isConnected || this.chartSignatures[key]!==signature) return;
+      if (!this.chartRegistered) { Chart.register(ArcElement,BarController,BarElement,CategoryScale,DoughnutController,LinearScale,Tooltip); this.chartRegistered=true; }
+      this.charts[key]?.destroy(); this.charts[key]=new Chart(canvas,config());
+    }).catch(()=>{delete this.chartSignatures[key];this.error='Grafikler yüklenemedi.';});
+  }
+  private monthlyConfig(): ChartConfiguration<'bar', number[], string> {
+    return { type:'bar', data:{ labels:this.monthly.map(item=>this.monthName(item.month)), datasets:[
+      { label:'Gelir',data:this.monthly.map(item=>item.income/100),backgroundColor:'#8071e5',borderRadius:4,borderSkipped:false,barPercentage:.66,categoryPercentage:.68 },
+      { label:'Gider',data:this.monthly.map(item=>item.expense/100),backgroundColor:'#c1baf3',borderRadius:4,borderSkipped:false,barPercentage:.66,categoryPercentage:.68 }
+    ]}, options:{ responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:context=>`${context.dataset.label}: ${this.money.format(Number(context.raw))}`}}},scales:{x:{grid:{display:false},ticks:{color:'#9694a3',font:{size:9}}},y:{beginAtZero:true,grid:{color:'#eeedf2'},ticks:{color:'#9694a3',font:{size:8},callback:value=>this.money.format(Number(value))}}} } };
+  }
+  private categoryConfig(): ChartConfiguration<'doughnut', number[], string> {
+    return { type:'doughnut',data:{labels:this.summary.categories.map(item=>item.name),datasets:[{data:this.summary.categories.map(item=>item.amount/100),backgroundColor:this.summary.categories.map(item=>item.color),borderWidth:0,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:'76%',plugins:{legend:{display:false},tooltip:{callbacks:{label:context=>`${context.label}: ${this.money.format(Number(context.raw))}`}}}} };
+  }
   load(): void {
     this.loading = true; this.error = '';
     this.http.get<Category[]>('/api/categories').subscribe({next:v=>this.categories=v,error:()=>this.error='Kategoriler yüklenemedi. API sunucusunun çalıştığından emin olun.'});
@@ -42,21 +83,19 @@ export class AppComponent implements OnInit {
   get yearIncome(): number { return this.monthly.reduce((total,item)=>total+item.income,0); }
   get yearExpense(): number { return this.monthly.reduce((total,item)=>total+item.expense,0); }
   get yearSavings(): number { return this.yearIncome-this.yearExpense; }
-  get donutGradient(): string {
-    const total=this.summary.categories.reduce((sum,category)=>sum+category.amount,0);
-    if(!total)return 'conic-gradient(#e9e6f8 0 100%)';
-    let cursor=0;
-    const segments=this.summary.categories.map(category=>{const start=cursor;cursor+=category.amount/total*100;return `${category.color} ${start}% ${cursor}%`;});
-    return `conic-gradient(${segments.join(',')})`;
+  monthChange(current: number, previous: number): string {
+    if(previous===0)return current===0?'Değişim yok':'Geçen ay verisi yok';
+    const percent=(current-previous)/previous*100;
+    return `${percent>=0?'↗':'↘'} ${Math.abs(percent).toLocaleString('tr-TR',{maximumFractionDigits:1})}% geçen aya göre`;
   }
   fmt(cents: number): string { return this.money.format(cents/100); }
   date(value: string): string { const [y,m,d]=value.slice(0,10).split('-'); return `${d}.${m}.${y}`; }
   setPage(page: typeof this.active): void { this.active=page; if(page==='reports')this.loadMonthly(); }
-  openNew(type: 'Income'|'Expense'='Expense'): void { this.editingId=null;this.form={type,amount:'',description:'',category_id:0,transaction_date:new Date().toISOString().slice(0,10)};this.modal=true; }
+  openNew(type: 'Income'|'Expense'='Expense'): void { this.editingId=null;this.form={type,amount:'',description:'',category_id:0,transaction_date:this.localDate(new Date())};this.modal=true; }
   edit(item: Transaction): void { this.editingId=item.id;this.form={type:item.type,amount:(item.amount/100).toFixed(2),description:item.description,category_id:item.category_id,transaction_date:item.transaction_date.slice(0,10)};this.modal=true; }
   save(): void {
-    const amount=Math.round(Number(this.form.amount)*100);
-    if(!this.form.description.trim()||!this.form.category_id||!Number.isSafeInteger(amount)||amount<=0||!this.form.transaction_date){this.error='Açıklama, kategori, geçerli tarih ve sıfırdan büyük tutar girin.';return;}
+    const amount=this.toCents(this.form.amount);
+    if(!this.form.description.trim()||!this.form.category_id||amount===null||amount<=0||!this.form.transaction_date){this.error='Açıklama, kategori, geçerli tarih ve sıfırdan büyük (en fazla iki ondalık basamaklı) tutar girin.';return;}
     const body={...this.form,amount}; const request=this.editingId?this.http.put(`/api/transactions/${this.editingId}`,body):this.http.post('/api/transactions',body);
     request.subscribe({next:()=>{this.modal=false;this.notice=this.editingId?'İşlem güncellendi.':'İşlem eklendi.';this.error='';this.load();},error:e=>this.error=e.error?.error||'İşlem kaydedilemedi.'});
   }
