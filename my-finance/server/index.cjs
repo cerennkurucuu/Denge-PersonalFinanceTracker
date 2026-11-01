@@ -124,8 +124,10 @@ app.post('/api/auth/google', sameOriginMutation, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ user: db.prepare('SELECT id,email,name FROM users WHERE id=?').get(userId) });
   } catch (error) {
-    if (error.message?.includes('signing keys are temporarily unavailable')) return fail(res, 503, 'Google doğrulama hizmetine şu anda ulaşılamıyor. Biraz sonra yeniden deneyin.');
-    if (error.message?.includes('Google ID token') || error.message?.includes('Google account identity')) return fail(res, 401, 'Google giriş bilgisi geçersiz veya süresi dolmuş.');
+    const networkFailure = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE'].includes(error.code);
+    if (networkFailure || Number(error.response?.status) >= 500) return fail(res, 503, 'Google doğrulama hizmetine şu anda ulaşılamıyor. Biraz sonra yeniden deneyin.');
+    if (error.message?.includes('Google account identity')) return fail(res, 401, 'Google hesabı doğrulanamadı.');
+    if (error.message?.includes('Google ID token') || error.message?.includes('Wrong recipient') || error.message?.includes('Invalid issuer') || error.message?.includes('Token used')) return fail(res, 401, 'Google giriş bilgisi geçersiz veya süresi dolmuş.');
     console.error('Google token verification failed:', error.message);
     return fail(res, 503, 'Google hesabı şu anda doğrulanamadı. Biraz sonra yeniden deneyin.');
   }

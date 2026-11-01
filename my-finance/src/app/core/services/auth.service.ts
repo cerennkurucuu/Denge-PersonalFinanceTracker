@@ -70,7 +70,9 @@ export class AuthService {
     this.error = '';
     return this.api.signIn(credential).pipe(
       map(response => response.user),
-      tap({ error: response => this.error = response.error?.error || 'Google ile giriş yapılamadı.' }),
+      tap({ error: response => this.error = response.status === 0
+        ? 'Giriş sunucusuna ulaşılamadı. Uygulamayı npm start ile açıp sayfayı yenileyin.'
+        : response.error?.error || 'Google ile giriş yapılamadı.' }),
     );
   }
 

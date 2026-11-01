@@ -16,6 +16,7 @@ Denge, Türkçe arayüzlü bir kişisel finans takip uygulamasıdır. Gelir ve g
 
 - Angular 19, TypeScript, SCSS, Angular Forms ve HttpClient
 - Express.js REST API, Node.js ve `better-sqlite3`
+- `google-auth-library` ile sunucu tarafında Google ID token doğrulaması
 - SQLite migration dosyaları `server/migrations/` altında bulunur. Tutarlar integer kuruş olarak saklanır; bakiye ayrı bir tabloda tutulmaz.
 - İstemci tarafı rendering kullanılır. Angular SSR kaldırılmıştır; sunucu uygulaması Express API ve production statik dosyalarını sunar.
 - Aylık gelir/gider ve kategori dağılımı grafikleri responsive Chart.js bileşenleriyle çizilir.
@@ -110,7 +111,6 @@ src/app/
   shared/
     delete-confirmation/ Silme onay penceresi
   app.component.*    Oturum durumu ve sayfa bileşenlerini birleştiren kök kabuk
-  app-legacy.scss    Mevcut ekranlar arası ortak görsel sınıflar (taşıma uyumluluğu)
   auth-session.interceptor.ts  Oturum gerektiren API çağrıları
 styles.scss          Renk token'ları, reset ve uygulama geneli temel stiller
 server/index.cjs     Express API ve SQLite erişimi

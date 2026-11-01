@@ -1,8 +1,10 @@
 const { spawn } = require('node:child_process');
 const net = require('node:net');
 const path = require('node:path');
+const loadLocalEnv = require('./load-local-env.cjs');
 
 const projectRoot = path.join(__dirname, '..');
+loadLocalEnv(projectRoot);
 const angularCli = require.resolve('@angular/cli/bin/ng.js', { paths: [projectRoot] });
 const children = [];
 let stopping = false;

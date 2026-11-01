@@ -35,25 +35,22 @@ before(async () => {
 
 after(() => { if (db.open) db.close(); fs.rmSync(tempDir, { recursive: true, force: true }); });
 
-test('verifies Google ID token signature and security claims', async () => {
-  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
-  const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'test-kid', kty: 'RSA', use: 'sig', alg: 'RS256' };
-  const now = Math.floor(Date.now() / 1000);
-  const sign = claims => {
-    const header = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'test-kid', typ: 'JWT' })).toString('base64url');
-    const payload = Buffer.from(JSON.stringify({ iss: 'https://accounts.google.com', aud: 'test-client-id', sub: 'google-sub', email: 'user@example.com', email_verified: true, iat: now, exp: now + 600, ...claims })).toString('base64url');
-    const signed = `${header}.${payload}`;
-    return `${signed}.${crypto.sign('RSA-SHA256', Buffer.from(signed), privateKey).toString('base64url')}`;
+test('uses Google Auth Library to verify ID tokens against the configured audience', async () => {
+  let verifyOptions;
+  const payload = { sub: 'stable-google-sub', email: 'user@example.com', email_verified: true };
+  const client = {
+    verifyIdToken: async options => {
+      verifyOptions = options;
+      return { getPayload: () => payload };
+    },
   };
-  const fetchKeys = async () => [jwk];
-  const token = sign({ name: 'Test User' });
-  assert.equal((await verifyGoogleIdToken(token, 'test-client-id', { fetchKeys })).sub, 'google-sub');
-  await assert.rejects(verifyGoogleIdToken(token, 'another-client-id', { fetchKeys }), /audience/);
-  await assert.rejects(verifyGoogleIdToken(sign({ exp: now - 1 }), 'test-client-id', { fetchKeys }), /expired/);
-  await assert.rejects(verifyGoogleIdToken(sign({ iss: 'https://attacker.example' }), 'test-client-id', { fetchKeys }), /issuer/);
-  const parts = token.split('.');
-  parts[1] = Buffer.from(JSON.stringify({ iss: 'https://accounts.google.com', aud: 'test-client-id', sub: 'attacker', email: 'attacker@example.com', email_verified: true, iat: now, exp: now + 600 })).toString('base64url');
-  await assert.rejects(verifyGoogleIdToken(parts.join('.'), 'test-client-id', { fetchKeys }), /signature/);
+  assert.equal((await verifyGoogleIdToken('g'.repeat(120), 'web-client-id', client)).sub, payload.sub);
+  assert.deepEqual(verifyOptions, { idToken: 'g'.repeat(120), audience: 'web-client-id' });
+  await assert.rejects(verifyGoogleIdToken('short', 'web-client-id', client), /Google ID token/);
+  await assert.rejects(verifyGoogleIdToken('g'.repeat(120), '', client), /audience/);
+  await assert.rejects(verifyGoogleIdToken('g'.repeat(120), 'web-client-id', {
+    verifyIdToken: async () => ({ getPayload: () => ({ sub: 'missing-email' }) }),
+  }), /Google account identity/);
 });
 
 test('migrates existing records without assigning them to a new account', () => {
