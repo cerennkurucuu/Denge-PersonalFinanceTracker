@@ -9,18 +9,18 @@ Denge, Türkçe arayüzlü bir kişisel finans takip uygulamasıdır. Gelir ve g
 - Bakiye, aylık gelir/gider, son işlemler ve kategori harcama özeti
 - Aylık ve yıllık raporlar, tarih aralığına göre kategori analizi ve CSV dışa aktarma
 - Açık/koyu tema; responsive masaüstü ve mobil arayüz
-- Kalıcı SQLite depolama ve API doğrulaması
+- Kalıcı MySQL depolama ve API doğrulaması
 - Google hesabıyla giriş ve hesaplar arasında kullanıcıya özel veri ayrımı
 
 ## Teknolojiler ve mimari
 
 - Angular 19, TypeScript, SCSS, Angular Forms ve HttpClient
-- Express.js REST API, Node.js ve `better-sqlite3`
+- Express.js REST API, Node.js ve `mysql2` promise pool
 - `google-auth-library` ile sunucu tarafında Google ID token doğrulaması
-- SQLite migration dosyaları `server/migrations/` altında bulunur. Tutarlar integer kuruş olarak saklanır; bakiye ayrı bir tabloda tutulmaz.
+- Sürümlü MySQL şema migration’ları `server/migrations/mysql/` altında bulunur. Tutarlar integer kuruş olarak saklanır; bakiye ayrı bir tabloda tutulmaz.
 - İstemci tarafı rendering kullanılır. Angular SSR kaldırılmıştır; sunucu uygulaması Express API ve production statik dosyalarını sunar.
 - Aylık gelir/gider ve kategori dağılımı grafikleri responsive Chart.js bileşenleriyle çizilir.
-- Kullanıcılar Google `sub` kimliğiyle tanımlanır. Her işlem, kategori ve ayar `user_id` ile sınırlandırılır; oturum kimlikleri SQLite’ta yalnızca SHA-256 özetiyle saklanır.
+- Kullanıcılar Google `sub` kimliğiyle tanımlanır. Her işlem, kategori ve ayar `user_id` ile sınırlandırılır; oturum kimlikleri veritabanında yalnızca SHA-256 özetiyle saklanır.
 
 ## Gereksinimler
 
@@ -34,7 +34,13 @@ npm install
 npm start
 ```
 
-`npm start` Express API’yi ve Angular geliştirme sunucusunu birlikte başlatır. Uygulama genellikle `http://localhost:4200`, API `http://localhost:3000/api` adresindedir. 4200 portu doluysa kullanılabilir sonraki port seçilir ve terminalde gösterilir. SQLite dosyası ilk API başlangıcında `data/finance.sqlite` konumunda oluşturulur ve Git dışında tutulur. İstemciyi tek başına çalıştırmak için `npm run start:client`; API’yi tek başına çalıştırmak için `npm run start:api` kullanın. Production için önce `npm run build`, sonra `npm run start:prod` çalıştırın.
+`npm start` MySQL API’yi ve Angular geliştirme sunucusunu birlikte başlatır. Uygulama genellikle `http://localhost:4200`, API `http://localhost:3000/api` adresindedir. 4200 portu doluysa kullanılabilir sonraki port seçilir ve terminalde gösterilir. API başlangıcında sürümlü migration’lar gerekli tabloları oluşturur. İstemciyi tek başına çalıştırmak için `npm run start:client`; API’yi tek başına çalıştırmak için `npm run start:api` kullanın. Production için önce `npm run build`, sonra `npm run start:prod` çalıştırın.
+
+### MySQL veritabanı
+
+`.env.example` dosyasını `.env` olarak kopyalayın ve `MYSQL_HOST`, `MYSQL_PORT` (varsayılan `3306`), `MYSQL_DATABASE`, `MYSQL_USER` ve `MYSQL_PASSWORD` değerlerini yerel olarak doldurun. `.env` Git’e eklenmez. Uygulama başlangıcında `server/migrations/mysql/` altındaki migration’lar gerekli tabloları oluşturur. `MYSQL_SSL=true` TLS doğrulamasını açar; sağlayıcının özel CA dosyası gerekiyorsa `MYSQL_SSL_CA` yolunu belirtin. `NODE_EXTRA_CA_CERTS` Node.js’in ek sertifika deposudur; MySQL bağlantı adresi veya parolası değildir. Production ortamında TLS zorunludur. Sertifikasız test bağlantısında TLS kapalı bırakılabilir; gerçek finansal verileri şifrelenmemiş bağlantıda kullanmayın.
+
+Bu sürüm SQLite kullanmaz. Önceden oluşmuş yerel SQLite dosyası varsa silinmez veya otomatik aktarılmaz; uygulama tarafından okunmaz. Eski kayıtlar gerekiyorsa ayrıca kontrollü, doğrulamalı aktarım gerekir.
 
 ### Google girişi
 
@@ -86,7 +92,9 @@ npm run test:api
 npm run test:e2e
 ```
 
-API testleri Supertest ve Node test runner kullanır. Angular bileşen testleri Karma/Jasmine altyapısını, uçtan uca ve mobil görünüm kontrolleri Playwright’ı kullanır. E2E testleri kullanıcının veritabanı yerine geçici test veritabanı ve deneme hesabı kullanır.
+MySQL entegrasyon testi yalnızca test veritabanında ve açıkça etkinleştirilerek çalıştırılır (PowerShell): `$env:MYSQL_TEST_MODE='1'; npm run test:mysql`. API ve E2E testleri de MySQL kullanır; test verileri rastgele kimlikli geçici kullanıcılarla sınırlandırılır ve test sonunda silinir. Bu testleri production veritabanında çalıştırmayın.
+
+Google ID token birim testi Node test runner’ı, MySQL API ve E2E testleri Supertest/Playwright kullanır. Angular bileşen testleri Karma/Jasmine altyapısını kullanır.
 
 ## Ekran görüntüleri
 
@@ -125,8 +133,9 @@ src/app/
   app.component.*    Oturum durumu ve sayfa bileşenlerini birleştiren kök kabuk
   auth-session.interceptor.ts  Oturum gerektiren API çağrıları
 styles.scss          Renk token'ları, reset ve uygulama geneli temel stiller
-server/index.cjs     Express API ve SQLite erişimi
-server/migrations/   SQLite şema migration'ları
+    server/index.cjs     Express API ve MySQL bağlantı başlangıcı
+    server/mysql-server.cjs  MySQL havuzu ve REST API
+    server/migrations/mysql/ MySQL şema migration'ları
 server/tests/        REST API entegrasyon testleri
 ```
 
