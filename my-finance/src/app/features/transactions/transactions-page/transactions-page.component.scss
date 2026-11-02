@@ -1,6 +1,12 @@
 :host { display: block; }
 
 .full-panel { min-height: 360px; }
+.transaction-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-top: 18px; padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas); }
+.filter-select, .filter-date { display: grid; min-width: 150px; gap: 6px; color: var(--muted); font-size: .75rem; font-weight: 650; }
+.filter-date input { min-height: 40px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
+.filter-select select { justify-content: flex-start; }
+.clear-filters { min-height: 40px; }
+.filter-error { margin: 12px 2px 0; color: var(--danger); font-size: .8125rem; }
 .table-scroll { width: 100%; margin-top: 16px; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .875rem; }
 th {
@@ -37,6 +43,11 @@ td:first-child small { margin-top: 3px; color: var(--muted); font-size: .75rem; 
 
 @media (max-width: 640px) {
   .row-actions { gap: 8px; }
+  .transaction-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; }
+  .filter-select, .filter-date { min-width: 0; }
+  .filter-select { grid-column: 1 / -1; }
+  .filter-date input, .filter-select select { width: 100%; min-width: 0; }
+  .clear-filters { grid-column: 1 / -1; }
   .table-scroll { margin-top: 10px; }
   th, td { padding-right: 8px; padding-left: 8px; }
 }

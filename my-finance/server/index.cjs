@@ -31,6 +31,11 @@ if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'
   finally { db.pragma('foreign_keys = ON'); }
 }
 
+if (!db.pragma('table_info(categories)').some(column => column.name === 'is_preferred')) {
+  const preferredCategoriesMigration = fs.readFileSync(path.join(__dirname, 'migrations', '003-preferred-categories.sql'), 'utf8');
+  db.transaction(() => db.exec(preferredCategoriesMigration))();
+}
+
 const defaults = [
   ['Market', 'Expense', '#8b5cf6', 'basket'], ['Ulaşım', 'Expense', '#f59e0b', 'car'], ['Faturalar', 'Expense', '#0ea5e9', 'bolt'],
   ['Sağlık', 'Expense', '#ef4444', 'heart'], ['Alışveriş', 'Expense', '#ec4899', 'bag'], ['Eğlence', 'Expense', '#14b8a6', 'sparkles'],
@@ -38,6 +43,15 @@ const defaults = [
   ['Maaş', 'Income', '#10b981', 'briefcase'], ['Ek gelir', 'Income', '#22c55e', 'plus'], ['Freelance', 'Income', '#06b6d4', 'laptop'], ['Yatırım', 'Income', '#84cc16', 'chart'], ['Diğer', 'Income', '#94a3b8', 'circle'],
 ];
 const insertCategory = db.prepare('INSERT OR IGNORE INTO categories(user_id,name,type,color,icon,is_default) VALUES (?,?,?,?,?,1)');
+const ensurePreferredCategory = db.prepare(`
+  UPDATE categories
+  SET is_preferred=1
+  WHERE user_id=? AND type=? AND name=?
+    AND NOT EXISTS (
+      SELECT 1 FROM categories AS current
+      WHERE current.user_id=? AND current.type=? AND current.is_preferred=1
+    )
+`);
 
 const fail = (res, status, message) => res.status(status).json({ error: message });
 const googleClientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
@@ -112,6 +126,8 @@ app.post('/api/auth/google', sameOriginMutation, async (req, res) => {
           userId = Number(db.prepare('INSERT INTO users(google_sub,email,name) VALUES (?,?,?)').run(payload.sub, email, name).lastInsertRowid);
         }
         for (const category of defaults) insertCategory.run(userId, ...category);
+        ensurePreferredCategory.run(userId, 'Expense', 'Market', userId, 'Expense');
+        ensurePreferredCategory.run(userId, 'Income', 'Maaş', userId, 'Income');
         db.prepare("INSERT OR IGNORE INTO settings(user_id,currency,theme,language) VALUES (?,'TRY','light','tr')").run(userId);
         db.prepare('DELETE FROM auth_sessions WHERE expires_at<=?').run(Math.floor(Date.now() / 1000));
         db.prepare('INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (?,?,?)').run(hashSession(token), userId, expiresAt);
@@ -167,6 +183,18 @@ app.post('/api/categories', (req, res) => {
   if (typeof name !== 'string' || !name.trim() || name.length > 40 || !['Income', 'Expense'].includes(type) || !/^#[0-9a-fA-F]{6}$/.test(color)) return fail(res, 400, 'Kategori adı, türü veya rengi geçersiz.');
   try { const result = db.prepare('INSERT INTO categories(user_id,name,type,color,icon) VALUES (?,?,?,?,?)').run(req.user.id, name.trim(), type, color, String(icon).slice(0, 32)); return res.status(201).json(db.prepare('SELECT * FROM categories WHERE id=? AND user_id=?').get(result.lastInsertRowid, req.user.id)); }
   catch (error) { if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return fail(res, 409, 'Bu kategori zaten var.'); throw error; }
+});
+app.put('/api/categories/:id/preferred', (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id < 1) return fail(res, 400, 'Geçersiz kategori kimliği.');
+  const category = db.prepare('SELECT * FROM categories WHERE id=? AND user_id=?').get(id, req.user.id);
+  if (!category) return fail(res, 404, 'Kategori bulunamadı.');
+
+  db.transaction(() => {
+    db.prepare('UPDATE categories SET is_preferred=0 WHERE user_id=? AND type=?').run(req.user.id, category.type);
+    db.prepare('UPDATE categories SET is_preferred=1 WHERE id=? AND user_id=?').run(id, req.user.id);
+  })();
+  return res.json(db.prepare('SELECT * FROM categories WHERE id=? AND user_id=?').get(id, req.user.id));
 });
 app.put('/api/categories/:id', (req, res) => {
   const id = Number(req.params.id); const current = db.prepare('SELECT * FROM categories WHERE id=? AND user_id=?').get(id, req.user.id); if (!current) return fail(res, 404, 'Kategori bulunamadı.');

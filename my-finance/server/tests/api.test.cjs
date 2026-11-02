@@ -16,8 +16,8 @@ let primary;
 
 function createTestAccount(sub, email) {
   const userId = Number(db.prepare('INSERT INTO users(google_sub,email,name) VALUES (?,?,?)').run(sub, email, email.split('@')[0]).lastInsertRowid);
-  db.prepare("INSERT INTO categories(user_id,name,type,color,icon,is_default) VALUES (?,'Market','Expense','#8b5cf6','basket',1)").run(userId);
-  db.prepare("INSERT INTO categories(user_id,name,type,color,icon,is_default) VALUES (?,'Maaş','Income','#10b981','briefcase',1)").run(userId);
+  db.prepare("INSERT INTO categories(user_id,name,type,color,icon,is_default,is_preferred) VALUES (?,'Market','Expense','#8b5cf6','basket',1,1)").run(userId);
+  db.prepare("INSERT INTO categories(user_id,name,type,color,icon,is_default,is_preferred) VALUES (?,'Maaş','Income','#10b981','briefcase',1,1)").run(userId);
   db.prepare("INSERT INTO settings(user_id,currency,theme,language) VALUES (?,'TRY','light','tr')").run(userId);
   const token = crypto.randomBytes(32).toString('base64url');
   db.prepare('INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (?,?,?)').run(crypto.createHash('sha256').update(token).digest('hex'), userId, Math.floor(Date.now() / 1000) + 3600);
@@ -66,6 +66,17 @@ test('migrates existing records without assigning them to a new account', () => 
   assert.equal(legacy.prepare('SELECT user_id,amount FROM transactions WHERE id=?').get(transactionId).user_id, null);
   assert.deepEqual(legacy.pragma('foreign_key_check'), []);
   legacy.close();
+
+  const preferred = new Database(path.join(tempDir, 'preferred.sqlite'));
+  preferred.exec(`CREATE TABLE categories (
+    id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, type TEXT, color TEXT, icon TEXT, is_default INTEGER
+  )`);
+  preferred.exec("INSERT INTO categories VALUES (1,7,'Market','Expense','#8b5cf6','basket',1),(2,7,'Faturalar','Expense','#0ea5e9','bolt',1),(3,7,'Maaş','Income','#10b981','briefcase',1)");
+  preferred.exec(fs.readFileSync(path.join(__dirname, '../migrations/003-preferred-categories.sql'), 'utf8'));
+  assert.equal(preferred.prepare('SELECT is_preferred FROM categories WHERE id=1').get().is_preferred, 1);
+  assert.equal(preferred.prepare('SELECT is_preferred FROM categories WHERE id=2').get().is_preferred, 0);
+  assert.equal(preferred.prepare('SELECT is_preferred FROM categories WHERE id=3').get().is_preferred, 1);
+  preferred.close();
 });
 
 test('requires a Google session and isolates data between accounts', async () => {
@@ -113,13 +124,34 @@ test('creates, edits, lists, deletes transactions and computes integer-cent bala
 });
 
 test('supports category CRUD while protecting defaults and referenced categories', async () => {
-  const added = await primary.post('/api/categories').send({ name: 'Kitaplar', type: 'Expense', color: '#5261ac' }).expect(201);
-  await primary.put(`/api/categories/${added.body.id}`).send({ name: 'Kitap ve kırtasiye', color: '#5261ac' }).expect(200);
+  const added = await primary.post('/api/categories').send({ name: 'Kitaplar', type: 'Expense', color: '#5261ac', icon: 'paw' }).expect(201);
+  assert.equal(added.body.icon, 'paw');
+  await primary.put(`/api/categories/${added.body.id}`).send({ name: 'Kitap ve kırtasiye', color: '#5261ac', icon: 'book' }).expect(200)
+    .expect(response => assert.equal(response.body.icon, 'book'));
   await primary.delete(`/api/categories/${expenseCategory.id}`).expect(400);
   const usedTransaction = await primary.post('/api/transactions').send({ type: 'Expense', amount: 200, description: 'Kitap', category_id: added.body.id, transaction_date: '2026-06-10' }).expect(201);
   await primary.delete(`/api/categories/${added.body.id}`).expect(409);
   await primary.delete(`/api/transactions/${usedTransaction.body.id}`).expect(204);
   await primary.delete(`/api/categories/${added.body.id}`).expect(204);
+});
+
+test('sets one preferred category per user and transaction type', async () => {
+  const addedExpense = await primary.post('/api/categories').send({ name: 'Evcil hayvan', type: 'Expense' }).expect(201);
+  const addedIncome = await primary.post('/api/categories').send({ name: 'Kira geliri', type: 'Income' }).expect(201);
+
+  await primary.put(`/api/categories/${addedExpense.body.id}/preferred`).send({}).expect(200)
+    .expect(response => assert.equal(response.body.is_preferred, 1));
+  await primary.put(`/api/categories/${addedIncome.body.id}/preferred`).send({}).expect(200)
+    .expect(response => assert.equal(response.body.is_preferred, 1));
+
+  const categories = (await primary.get('/api/categories').expect(200)).body;
+  assert.deepEqual(categories.filter(category => category.type === 'Expense' && category.is_preferred).map(category => category.id), [addedExpense.body.id]);
+  assert.deepEqual(categories.filter(category => category.type === 'Income' && category.is_preferred).map(category => category.id), [addedIncome.body.id]);
+
+  await primary.put(`/api/categories/${expenseCategory.id}/preferred`).send({}).expect(200);
+  const updated = (await primary.get('/api/categories').expect(200)).body;
+  assert.equal(updated.find(category => category.id === expenseCategory.id).is_preferred, 1);
+  assert.equal(updated.find(category => category.id === addedExpense.body.id).is_preferred, 0);
 });
 
 test('serves settings and yearly report endpoints with validated settings', async () => {

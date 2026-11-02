@@ -68,6 +68,10 @@ export class FinanceApiService {
     return this.http.delete<void>(`/api/categories/${id}`);
   }
 
+  setPreferredCategory(id: number): Observable<Category> {
+    return this.http.put<Category>(`/api/categories/${id}/preferred`, {});
+  }
+
   updateSettings(settings: Partial<Settings>): Observable<Settings> {
     return this.http.put<Settings>('/api/settings', settings);
   }

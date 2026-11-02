@@ -4,10 +4,10 @@ Denge, Türkçe arayüzlü bir kişisel finans takip uygulamasıdır. Gelir ve g
 
 ## Özellikler
 
-- Gelir ve gider ekleme, düzenleme, silme ve türe göre filtreleme
-- Hazır kategoriler ve kullanıcı kategorileri
+- Gelir ve gider ekleme, düzenleme, silme, tür ve tarih aralığı filtreleme
+- Hazır kategoriler ve kullanıcı kategorileri; gelir ve gider için ayrı işlem varsayılanı ve simge seçimi
 - Bakiye, aylık gelir/gider, son işlemler ve kategori harcama özeti
-- Aylık ve yıllık raporlar, CSV dışa aktarma
+- Aylık ve yıllık raporlar, tarih aralığına göre kategori analizi ve CSV dışa aktarma
 - Açık/koyu tema; responsive masaüstü ve mobil arayüz
 - Kalıcı SQLite depolama ve API doğrulaması
 - Google hesabıyla giriş ve hesaplar arasında kullanıcıya özel veri ayrımı
@@ -59,6 +59,7 @@ Kullanıcı ayrımı migration `002-user-ownership.sql` ile uygulanır. Eski tek
 | PUT, DELETE | `/api/transactions/:id` | İşlemi güncelle veya sil |
 | GET, POST | `/api/categories` | Kategorileri listele veya ekle |
 | PUT, DELETE | `/api/categories/:id` | Kullanıcı kategorisini düzenle veya sil |
+| PUT | `/api/categories/:id/preferred` | Bu kategori türü için varsayılan işlem kategorisini belirle |
 | GET | `/api/dashboard/summary` | Bakiye, dönem özeti ve son işlemler |
 | GET | `/api/reports/monthly?year=2026` | Aylık gelir/gider toplamları (kuruş) |
 | GET | `/api/reports/yearly` | Yıllık gelir/gider toplamları (kuruş) |
@@ -82,13 +83,24 @@ Finans endpoint’leri Google oturum cookie’si olmadan kullanılamaz. İşlem 
 npm run build
 npm test -- --watch=false --browsers=ChromeHeadless
 npm run test:api
+npm run test:e2e
 ```
 
-API testleri Supertest ve Node test runner kullanır. Tarayıcı testleri Angular Karma/Jasmine altyapısını kullanır.
+API testleri Supertest ve Node test runner kullanır. Angular bileşen testleri Karma/Jasmine altyapısını, uçtan uca ve mobil görünüm kontrolleri Playwright’ı kullanır. E2E testleri kullanıcının veritabanı yerine geçici test veritabanı ve deneme hesabı kullanır.
 
 ## Ekran görüntüleri
 
-> Dashboard, işlem listesi ve mobil görünüm ekran görüntüleri eklenecek.
+### Genel bakış
+
+![Denge dashboard ekranı](docs/screenshots/dashboard-desktop.png)
+
+### Raporlar
+
+![Denge raporlar ekranı](docs/screenshots/reports-desktop.png)
+
+### Mobil işlemler
+
+![Denge mobil işlem ekranı](docs/screenshots/transactions-mobile.png)
 
 ## Proje yapısı
 

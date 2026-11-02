@@ -14,6 +14,7 @@ export interface Category {
   color: string;
   icon: string;
   is_default: number;
+  is_preferred: number;
 }
 
 export interface Transaction {

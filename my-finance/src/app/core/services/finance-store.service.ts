@@ -26,7 +26,11 @@ export class FinanceStoreService {
   categoryModal = false;
   editingTransactionId: number | null = null;
   transactionFilter: 'All' | TransactionType = 'All';
+  transactionFrom = '';
+  transactionTo = '';
   reportYear = new Date().getFullYear();
+  reportFrom = `${this.reportYear}-01-01`;
+  reportTo = `${this.reportYear}-12-31`;
   deletePrompt: DeletePrompt | null = null;
   transactionForm: TransactionFormValue = this.emptyTransactionForm();
   categoryForm: CategoryFormValue = this.emptyCategoryForm();
@@ -34,13 +38,61 @@ export class FinanceStoreService {
   readonly currentDate = this.format.localDate(new Date());
 
   get visibleTransactions(): Transaction[] {
-    return this.transactionFilter === 'All'
-      ? this.transactions
-      : this.transactions.filter(item => item.type === this.transactionFilter);
+    if (this.hasInvalidTransactionRange) return [];
+    return this.transactions.filter(item =>
+      (this.transactionFilter === 'All' || item.type === this.transactionFilter)
+      && (!this.transactionFrom || item.transaction_date.slice(0, 10) >= this.transactionFrom)
+      && (!this.transactionTo || item.transaction_date.slice(0, 10) <= this.transactionTo),
+    );
+  }
+
+  get hasInvalidTransactionRange(): boolean {
+    return !!this.transactionFrom && !!this.transactionTo && this.transactionFrom > this.transactionTo;
+  }
+
+  get reportDateRangeValid(): boolean {
+    return !!this.reportFrom && !!this.reportTo && this.reportFrom <= this.reportTo;
+  }
+
+  get reportTransactions(): Transaction[] {
+    if (!this.reportDateRangeValid) return [];
+    return this.transactions.filter(item => {
+      const date = item.transaction_date.slice(0, 10);
+      return date >= this.reportFrom && date <= this.reportTo;
+    });
+  }
+
+  get reportIncome(): number {
+    return this.reportTransactions.reduce((sum, item) => sum + (item.type === 'Income' ? item.amount : 0), 0);
+  }
+
+  get reportExpense(): number {
+    return this.reportTransactions.reduce((sum, item) => sum + (item.type === 'Expense' ? item.amount : 0), 0);
+  }
+
+  get reportSavings(): number {
+    return this.reportIncome - this.reportExpense;
+  }
+
+  get reportCategories(): DashboardSummary['categories'] {
+    const totals = new Map<string, DashboardSummary['categories'][number]>();
+    for (const transaction of this.reportTransactions) {
+      if (transaction.type !== 'Expense') continue;
+      const current = totals.get(transaction.category) ?? { name: transaction.category, color: transaction.category_color, amount: 0 };
+      current.amount += transaction.amount;
+      totals.set(transaction.category, current);
+    }
+    return [...totals.values()].sort((a, b) => b.amount - a.amount);
   }
 
   get availableCategories(): Category[] {
-    return this.categories.filter(category => category.type === this.transactionForm.type);
+    return this.categories
+      .filter(category => category.type === this.transactionForm.type)
+      .sort((a, b) => b.is_preferred - a.is_preferred);
+  }
+
+  preferredCategory(type: TransactionType): Category | undefined {
+    return this.categories.find(category => category.type === type && category.is_preferred === 1);
   }
 
   get expenseCategories(): Category[] {
@@ -67,11 +119,29 @@ export class FinanceStoreService {
     return this.yearIncome - this.yearExpense;
   }
 
+  setReportYear(year: number): void {
+    this.reportYear = year;
+    this.reportFrom = `${year}-01-01`;
+    this.reportTo = `${year}-12-31`;
+    this.loadMonthly();
+  }
+
+  clearTransactionFilters(): void {
+    this.transactionFilter = 'All';
+    this.transactionFrom = '';
+    this.transactionTo = '';
+  }
+
   load(): void {
     this.loading = true;
     this.error = '';
     this.api.getCategories().subscribe({
-      next: categories => this.categories = categories,
+      next: categories => {
+        this.categories = categories;
+        if (this.transactionModal && this.editingTransactionId === null) {
+          this.transactionForm.category_id = this.preferredCategory(this.transactionForm.type)?.id ?? 0;
+        }
+      },
       error: () => this.error = 'Kategoriler yüklenemedi. API sunucusunun çalıştığından emin olun.',
     });
     this.api.getTransactions().subscribe({
@@ -112,8 +182,13 @@ export class FinanceStoreService {
   openNewTransaction(type: TransactionType = 'Expense'): void {
     this.editingTransactionId = null;
     this.modalError = '';
-    this.transactionForm = { ...this.emptyTransactionForm(), type };
+    this.transactionForm = { ...this.emptyTransactionForm(), type, category_id: this.preferredCategory(type)?.id ?? 0 };
     this.transactionModal = true;
+  }
+
+  setTransactionType(type: TransactionType): void {
+    this.transactionForm.type = type;
+    this.transactionForm.category_id = this.preferredCategory(type)?.id ?? 0;
   }
 
   editTransaction(item: Transaction): void {
@@ -213,6 +288,18 @@ export class FinanceStoreService {
     });
   }
 
+  setPreferredCategory(category: Category): void {
+    this.api.setPreferredCategory(category.id).subscribe({
+      next: selected => {
+        this.categories = this.categories.map(current => current.type === selected.type
+          ? { ...current, is_preferred: current.id === selected.id ? 1 : 0 }
+          : current);
+        this.notice = `${selected.name}, ${selected.type === 'Income' ? 'gelir' : 'gider'} işlemleri için varsayılan kategori oldu.`;
+      },
+      error: response => this.error = response.error?.error || 'Varsayılan kategori kaydedilemedi.',
+    });
+  }
+
   toggleTheme(): void {
     this.dark = !this.dark;
     this.applyTheme();
@@ -230,12 +317,46 @@ export class FinanceStoreService {
         (item.amount / 100).toFixed(2),
       ]),
     ];
-    const csv = '\uFEFF' + rows.map(row => row.map(cell => `"${String(cell).replaceAll('"', '""')}"`).join(';')).join('\r\n');
+    this.downloadCsv(rows, `denge-islemler_${this.transactionFrom || 'tum'}_${this.transactionTo || 'tum'}.csv`);
+  }
+
+  exportReportCsv(): void {
+    if (!this.reportDateRangeValid) return;
+    const rows: Array<Array<string | number>> = [
+      ['Denge - Finansal rapor'],
+      ['Rapor dönemi', `${this.reportFrom} - ${this.reportTo}`],
+      ['Gelir (TRY)', (this.reportIncome / 100).toFixed(2)],
+      ['Gider (TRY)', (this.reportExpense / 100).toFixed(2)],
+      ['Net birikim (TRY)', (this.reportSavings / 100).toFixed(2)],
+      [],
+      ['Kategori analizi'],
+      ['Kategori', 'Tutar (TRY)'],
+      ...this.reportCategories.map(category => [category.name, (category.amount / 100).toFixed(2)]),
+      [],
+      ['İşlem listesi'],
+      ['Tarih', 'Tür', 'Açıklama', 'Kategori', 'Tutar (TRY)'],
+      ...this.reportTransactions.map(item => [
+        this.format.formatDate(item.transaction_date),
+        item.type === 'Income' ? 'Gelir' : 'Gider',
+        item.description,
+        item.category,
+        (item.amount / 100).toFixed(2),
+      ]),
+    ];
+    this.downloadCsv(rows, `denge-rapor_${this.reportFrom}_${this.reportTo}.csv`);
+  }
+
+  private downloadCsv(rows: Array<Array<string | number>>, filename: string): void {
+    const csv = '\uFEFF' + rows.map(row => row.map(cell => {
+      const value = String(cell);
+      const safeValue = /^[\s]*[=+@-]/.test(value) ? `'${value}` : value;
+      return `"${safeValue.replaceAll('"', '""')}"`;
+    }).join(';')).join('\r\n');
     const link = document.createElement('a');
     link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    link.download = 'denge-islemler.csv';
+    link.download = filename;
     link.click();
-    URL.revokeObjectURL(link.href);
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
   }
 
   dismissError(): void { this.error = ''; }

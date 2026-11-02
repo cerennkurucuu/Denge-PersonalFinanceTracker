@@ -1,31 +1,44 @@
 <header class="welcome-row report-heading" aria-labelledby="reports-title">
-  <div>
+  <div class="report-copy">
     <div class="eyebrow">PARANIN BÜYÜK RESMİ</div>
     <h1 id="reports-title">Finansal raporların</h1>
-    <p>Gelirini, harcamalarını ve birikim eğilimini dönemlere göre incele.</p>
+    <p>Yıllık akışı izle, gelirini ve harcamalarını seçtiğin tarih aralığında incele.</p>
   </div>
-  <label class="year-select" for="report-year">Rapor yılı
-    <select id="report-year" [(ngModel)]="finance.reportYear" (change)="yearChanged()">
-      @for (year of availableYears; track year) { <option [ngValue]="year">{{ year }}</option> }
-    </select>
-  </label>
+  <div class="report-controls" role="group" aria-label="Rapor dönemi">
+    <label class="year-select" for="report-year">Grafik yılı
+      <select id="report-year" [(ngModel)]="finance.reportYear" (change)="yearChanged()">
+        @for (year of availableYears; track year) { <option [ngValue]="year">{{ year }}</option> }
+      </select>
+    </label>
+    <label class="year-select" for="report-from">Başlangıç tarihi
+      <input id="report-from" type="date" [(ngModel)]="finance.reportFrom" aria-label="Rapor başlangıç tarihi">
+    </label>
+    <label class="year-select" for="report-to">Bitiş tarihi
+      <input id="report-to" type="date" [(ngModel)]="finance.reportTo" aria-label="Rapor bitiş tarihi">
+    </label>
+    <button class="outline-button report-export" type="button" [disabled]="!finance.reportDateRangeValid" (click)="finance.exportReportCsv()">↓ Raporu CSV indir</button>
+  </div>
 </header>
 
-<section class="report-summary" aria-label="Yıllık finans özeti">
+@if (!finance.reportDateRangeValid) {
+  <p class="filter-error" role="alert">Başlangıç tarihi, bitiş tarihinden sonra olamaz.</p>
+}
+
+<section class="report-summary" aria-label="Seçili tarih aralığının finans özeti">
   <article class="metric-card" aria-labelledby="annual-income-title">
-    <h2 id="annual-income-title" class="metric-label">Yıllık gelir <span class="metric-symbol income-symbol" aria-hidden="true">↙</span></h2>
-    <p class="metric-value">{{ format.formatAmount(finance.yearIncome) }}</p>
-    <p class="metric-foot">{{ finance.reportYear }} yılı toplamı</p>
+    <h2 id="annual-income-title" class="metric-label">Dönem geliri <span class="metric-symbol income-symbol" aria-hidden="true">↙</span></h2>
+    <p class="metric-value">{{ format.formatAmount(finance.reportIncome) }}</p>
+    <p class="metric-foot">Seçili tarih aralığı</p>
   </article>
   <article class="metric-card" aria-labelledby="annual-expense-title">
-    <h2 id="annual-expense-title" class="metric-label">Yıllık gider <span class="metric-symbol expense-symbol" aria-hidden="true">↗</span></h2>
-    <p class="metric-value">{{ format.formatAmount(finance.yearExpense) }}</p>
-    <p class="metric-foot">{{ finance.reportYear }} yılı toplamı</p>
+    <h2 id="annual-expense-title" class="metric-label">Dönem gideri <span class="metric-symbol expense-symbol" aria-hidden="true">↗</span></h2>
+    <p class="metric-value">{{ format.formatAmount(finance.reportExpense) }}</p>
+    <p class="metric-foot">Seçili tarih aralığı</p>
   </article>
   <article class="metric-card savings-metric" aria-labelledby="annual-savings-title">
     <h2 id="annual-savings-title" class="metric-label">Net birikim <span class="metric-symbol savings-symbol" aria-hidden="true">✳</span></h2>
-    <p class="metric-value" [class.negative-value]="finance.yearSavings < 0">{{ format.formatAmount(finance.yearSavings) }}</p>
-    <p class="metric-foot">Yıllık gelir ve gider farkı</p>
+    <p class="metric-value" [class.negative-value]="finance.reportSavings < 0">{{ format.formatAmount(finance.reportSavings) }}</p>
+    <p class="metric-foot">Dönem gelir ve gider farkı</p>
   </article>
 </section>
 
@@ -42,15 +55,22 @@
   </section>
 
   <section class="panel category-report" aria-labelledby="category-analysis-title">
-    <header class="panel-heading"><div><h2 id="category-analysis-title">Harcama kategorileri</h2><p>Bu ay en çok harcama yapılan alanlar</p></div></header>
-    @if (finance.summary.categories.length) {
+    <header class="panel-heading">
+      <div>
+        <h2 id="category-analysis-title">Harcama kategorileri</h2>
+        <p>{{ finance.reportFrom && finance.reportTo ? format.formatDate(finance.reportFrom) + ' – ' + format.formatDate(finance.reportTo) : 'Tarih seçilmedi' }}</p>
+      </div>
+    </header>
+    @if (!finance.reportDateRangeValid) {
+      <div class="report-empty"><h3>Tarih aralığını kontrol et</h3><p>Başlangıç tarihi bitiş tarihinden önce olmalı.</p></div>
+    } @else if (finance.reportCategories.length) {
       <ol class="category-progress-list">
-        @for (category of finance.summary.categories; track category.name) {
+        @for (category of finance.reportCategories; track category.name) {
           <li class="category-progress">
             <span class="category-dot" [style.background]="category.color" aria-hidden="true"></span>
             <div class="category-progress-details">
               <div class="category-progress-heading"><h3>{{ category.name }}</h3><strong>{{ format.formatAmount(category.amount) }}</strong></div>
-              <div class="progress-track" role="img" [attr.aria-label]="category.name + ', en yüksek kategori harcamasının yüzde ' + categoryShare(category.amount) + ' kadarı'">
+              <div class="progress-track" role="img" [attr.aria-label]="category.name + ', seçili dönemin en yüksek kategori harcamasının yüzde ' + categoryShare(category.amount) + ' kadarı'">
                 <span [style.background]="category.color" [style.width.%]="categoryShare(category.amount)"></span>
               </div>
             </div>
@@ -58,7 +78,7 @@
         }
       </ol>
     } @else {
-      <div class="report-empty"><span aria-hidden="true">◈</span><h3>Henüz kategori harcaması yok</h3><p>Bu ay işlem ekledikçe kategori dağılımı burada görünecek.</p></div>
+      <div class="report-empty"><span aria-hidden="true">◈</span><h3>Bu dönemde harcama yok</h3><p>Tarih aralığında gider işlemi olduğunda kategori analizi burada görünür.</p></div>
     }
   </section>
 </div>

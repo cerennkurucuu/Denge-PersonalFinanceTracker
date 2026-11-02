@@ -1,2 +1,66 @@
-<section class="welcome-row"><div><div class="eyebrow">KİŞİSELLEŞTİR</div><h1>Kategoriler</h1><p>Harcama ve gelir alanlarını kendine göre düzenle.</p></div><button class="quick-add" (click)="openNew()">＋ Kategori ekle</button></section>
-<section class="category-columns"><article class="panel category-list"><div class="panel-heading"><div><h2>Gider kategorileri</h2><p>{{finance.expenseCategories.length}} kategori</p></div></div>@for(cat of finance.expenseCategories;track cat.id){<div class="category-item"><i [style.background]="cat.color"></i><strong>{{cat.name}}</strong>@if(cat.is_default){<span class="default-tag">Varsayılan</span>}@else{<button (click)="finance.editCategory(cat)">Düzenle</button><button (click)="finance.requestCategoryDelete(cat)">Sil</button>}</div>}</article><article class="panel category-list"><div class="panel-heading"><div><h2>Gelir kategorileri</h2><p>{{finance.incomeCategories.length}} kategori</p></div></div>@for(cat of finance.incomeCategories;track cat.id){<div class="category-item"><i [style.background]="cat.color"></i><strong>{{cat.name}}</strong>@if(cat.is_default){<span class="default-tag">Varsayılan</span>}@else{<button (click)="finance.editCategory(cat)">Düzenle</button><button (click)="finance.requestCategoryDelete(cat)">Sil</button>}</div>}</article></section>
+<section class="welcome-row">
+  <div>
+    <div class="eyebrow">KİŞİSELLEŞTİR</div>
+    <h1>Kategoriler</h1>
+    <p>Harcama ve gelir alanlarını kendine göre düzenle.</p>
+  </div>
+  <button class="quick-add" type="button" (click)="openNew()">＋ Kategori ekle</button>
+</section>
+
+<section class="category-columns" aria-label="Gelir ve gider kategorileri">
+  <article class="panel category-list" aria-labelledby="expense-categories-title">
+    <header class="panel-heading">
+      <div><h2 id="expense-categories-title">Gider kategorileri</h2><p>{{ finance.expenseCategories.length }} kategori</p></div>
+    </header>
+    @for (category of finance.expenseCategories; track category.id) {
+      <div class="category-item">
+        <span class="category-icon-badge" [style.background]="category.color + '20'" [style.color]="category.color" aria-hidden="true">{{ iconSymbol(category.icon) }}</span>
+        <strong>{{ category.name }}</strong>
+        <button
+          type="button"
+          class="default-button"
+          [class.selected]="category.is_preferred === 1"
+          [attr.aria-pressed]="category.is_preferred === 1"
+          (click)="finance.setPreferredCategory(category)">
+          {{ category.is_preferred === 1 ? 'İşlem varsayılanı' : 'Varsayılan yap' }}
+        </button>
+        @if (category.is_default) {
+          <span class="default-tag">Hazır</span>
+        } @else {
+          <button type="button" (click)="finance.editCategory(category)">Düzenle</button>
+          <button type="button" class="delete-category" (click)="finance.requestCategoryDelete(category)">Sil</button>
+        }
+      </div>
+    } @empty {
+      <p class="category-empty">Henüz gider kategorisi yok.</p>
+    }
+  </article>
+
+  <article class="panel category-list" aria-labelledby="income-categories-title">
+    <header class="panel-heading">
+      <div><h2 id="income-categories-title">Gelir kategorileri</h2><p>{{ finance.incomeCategories.length }} kategori</p></div>
+    </header>
+    @for (category of finance.incomeCategories; track category.id) {
+      <div class="category-item">
+        <span class="category-icon-badge" [style.background]="category.color + '20'" [style.color]="category.color" aria-hidden="true">{{ iconSymbol(category.icon) }}</span>
+        <strong>{{ category.name }}</strong>
+        <button
+          type="button"
+          class="default-button"
+          [class.selected]="category.is_preferred === 1"
+          [attr.aria-pressed]="category.is_preferred === 1"
+          (click)="finance.setPreferredCategory(category)">
+          {{ category.is_preferred === 1 ? 'İşlem varsayılanı' : 'Varsayılan yap' }}
+        </button>
+        @if (category.is_default) {
+          <span class="default-tag">Hazır</span>
+        } @else {
+          <button type="button" (click)="finance.editCategory(category)">Düzenle</button>
+          <button type="button" class="delete-category" (click)="finance.requestCategoryDelete(category)">Sil</button>
+        }
+      </div>
+    } @empty {
+      <p class="category-empty">Henüz gelir kategorisi yok.</p>
+    }
+  </article>
+</section>

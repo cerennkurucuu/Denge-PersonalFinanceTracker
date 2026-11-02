@@ -7,7 +7,11 @@ import { FinanceFormatService } from './core/services/finance-format.service';
 
 function flushPageReads(http: HttpTestingController): void {
   http.match(request => request.method === 'GET').forEach(request => {
-    if (request.request.url === '/api/categories') request.flush([{ id: 1, name: 'Market', type: 'Expense', color: '#8b5cf6', icon: 'basket', is_default: 1 }]);
+    if (request.request.url === '/api/categories') request.flush([
+      { id: 1, name: 'Market', type: 'Expense', color: '#8b5cf6', icon: 'basket', is_default: 1, is_preferred: 1 },
+      { id: 2, name: 'Maaş', type: 'Income', color: '#10b981', icon: 'briefcase', is_default: 1, is_preferred: 1 },
+      { id: 3, name: 'Evcil hayvan', type: 'Expense', color: '#f59e0b', icon: 'paw', is_default: 0, is_preferred: 0 },
+    ]);
     else if (request.request.url === '/api/transactions') request.flush([]);
     else if (request.request.url === '/api/dashboard/summary') request.flush({ balance: 0, income: 0, expense: 0, monthIncome: 0, monthExpense: 0, previousMonthIncome: 0, previousMonthExpense: 0, recent: [], categories: [] });
     else if (request.request.url.startsWith('/api/reports/monthly')) request.flush([]);
@@ -53,6 +57,58 @@ describe('AppComponent', () => {
     root.querySelector<HTMLButtonElement>('.welcome-row .quick-add')!.click();
     fixture.detectChanges();
     expect(root.querySelector('.small-modal')).not.toBeNull();
+    expect(root.querySelector('#category-icon option[value="paw"]')).not.toBeNull();
+  });
+
+  it('preselects the preferred category when opening a transaction and changing its type', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const http = TestBed.inject(HttpTestingController);
+    initializeSignedIn(fixture, http);
+    const finance = TestBed.inject(FinanceStoreService);
+
+    finance.openNewTransaction();
+    expect(finance.transactionForm.category_id).toBe(1);
+    finance.setTransactionType('Income');
+    expect(finance.transactionForm.category_id).toBe(2);
+  });
+
+  it('filters transactions and report totals by inclusive date range', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const http = TestBed.inject(HttpTestingController);
+    initializeSignedIn(fixture, http);
+    const finance = TestBed.inject(FinanceStoreService);
+    finance.transactions = [
+      { id: 1, type: 'Income', amount: 10000, description: 'Mayıs maaşı', category_id: 2, category: 'Maaş', category_color: '#10b981', transaction_date: '2026-05-05' },
+      { id: 2, type: 'Expense', amount: 2500, description: 'Mayıs market', category_id: 1, category: 'Market', category_color: '#8b5cf6', transaction_date: '2026-05-08' },
+      { id: 3, type: 'Expense', amount: 1500, description: 'Haziran ulaşım', category_id: 4, category: 'Ulaşım', category_color: '#f59e0b', transaction_date: '2026-06-04' },
+    ];
+
+    finance.transactionFrom = '2026-06-01';
+    finance.transactionTo = '2026-06-30';
+    expect(finance.visibleTransactions.map(item => item.id)).toEqual([3]);
+
+    finance.reportFrom = '2026-05-01';
+    finance.reportTo = '2026-05-31';
+    expect(finance.reportIncome).toBe(10000);
+    expect(finance.reportExpense).toBe(2500);
+    expect(finance.reportSavings).toBe(7500);
+    expect(finance.reportCategories.map(category => category.name)).toEqual(['Market']);
+  });
+
+  it('updates the selected default category after the API saves it', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const http = TestBed.inject(HttpTestingController);
+    initializeSignedIn(fixture, http);
+    const finance = TestBed.inject(FinanceStoreService);
+    const preferred = { id: 3, name: 'Evcil hayvan', type: 'Expense' as const, color: '#f59e0b', icon: 'paw', is_default: 0, is_preferred: 1 };
+
+    finance.setPreferredCategory(preferred);
+    const update = http.expectOne('/api/categories/3/preferred');
+    expect(update.request.method).toBe('PUT');
+    update.flush(preferred);
+
+    expect(finance.categories.find(category => category.id === 1)?.is_preferred).toBe(0);
+    expect(finance.categories.find(category => category.id === 3)?.is_preferred).toBe(1);
   });
 
   it('formats Turkish lira amounts with comma decimals', () => {
@@ -81,7 +137,10 @@ describe('AppComponent', () => {
     await fixture.whenStable();
     fixture.detectChanges();
     const form = (fixture.nativeElement as HTMLElement).querySelector<HTMLFormElement>('form.modal-card')!;
-    expect(form.checkValidity()).toBeTrue();
+    const invalidFields = Array.from(form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select'))
+      .filter(field => !field.checkValidity())
+      .map(field => `${field.name}: ${field.value || '(empty)'}`);
+    expect(invalidFields).withContext('invalid transaction fields').toEqual([]);
     form.querySelector<HTMLButtonElement>('.quick-add')!.click();
 
     const create = http.expectOne('/api/transactions');

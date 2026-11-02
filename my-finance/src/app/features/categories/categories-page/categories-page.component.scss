@@ -1,11 +1,15 @@
 :host { display: block; }
 .category-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .category-list { min-height: 320px; }
-.category-item { display: flex; min-height: 52px; align-items: center; gap: 11px; border-top: 1px solid var(--line); font-size: .875rem; }
-.category-item > i { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 4px; }
-.category-item strong { flex: 1; font-weight: 600; }
-.category-item button { border: 0; background: transparent; color: var(--accent-strong); cursor: pointer; font-size: .75rem; font-weight: 600; }
-.category-item button:last-child { color: var(--danger); }
-.default-tag { padding: 5px 8px; border-radius: 6px; background: var(--canvas); color: var(--muted); font-size: .75rem; }
+.category-item { display: flex; min-height: 52px; align-items: center; gap: 10px; border-top: 1px solid var(--line); font-size: .875rem; }
+.category-icon-badge { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 9px; font-size: .9375rem; }
+.category-item strong { min-width: 55px; flex: 1; font-weight: 600; }
+.category-item button { padding: 5px 2px; border: 0; background: transparent; color: var(--accent-strong); cursor: pointer; font-size: .75rem; font-weight: 600; white-space: nowrap; }
+.category-item .delete-category { color: var(--danger); }
+.category-item .default-button { padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); }
+.category-item .default-button:hover, .category-item .default-button.selected { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-strong); }
+.default-tag { padding: 5px 8px; border-radius: 6px; background: var(--canvas); color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.category-empty { padding: 18px 0; border-top: 1px solid var(--line); }
 
 @media (max-width: 720px) { .category-columns { grid-template-columns: 1fr; gap: 12px; } .category-list { min-height: auto; } }
+@media (max-width: 390px) { .category-item { flex-wrap: wrap; padding: 9px 0; } .category-item strong { min-width: calc(100% - 28px); } .category-item .default-button { margin-left: 20px; } }
