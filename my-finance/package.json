@@ -11,7 +11,8 @@
     "test": "ng test",
     "test:e2e": "playwright test",
     "start:prod": "node scripts/run-api.cjs",
-    "test:api": "node --test server/tests/api.test.cjs"
+    "test:api": "node --test server/tests/api.test.cjs",
+    "test:mysql": "node --test server/tests/mysql.integration.test.cjs"
   },
   "private": true,
   "dependencies": {
@@ -23,10 +24,10 @@
     "@angular/platform-browser": "^19.0.0",
     "@angular/platform-browser-dynamic": "^19.0.0",
     "@angular/router": "^19.0.0",
-    "better-sqlite3": "^11.5.0",
     "chart.js": "^4.6.1",
     "express": "^4.18.2",
     "google-auth-library": "^10.9.1",
+    "mysql2": "^3.24.6",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",
     "zone.js": "~0.15.0"

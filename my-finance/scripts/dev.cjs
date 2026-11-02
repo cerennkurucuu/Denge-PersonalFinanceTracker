@@ -40,10 +40,12 @@ function stop(exitCode = 0) {
 }
 
 async function waitForApi() {
+  const expectedDatabase = 'mysql';
   for (let attempt = 0; attempt < 40; attempt++) {
     try {
       const response = await fetch('http://127.0.0.1:3000/api/health');
-      if (response.ok && (await response.json()).status === 'ok') return;
+      const health = response.ok ? await response.json() : null;
+      if (health?.status === 'ok' && health.database === expectedDatabase) return;
     } catch { /* The API child may need a moment to bind its port. */ }
     await new Promise(resolve => setTimeout(resolve, 250));
   }
@@ -56,12 +58,18 @@ async function angularPortIsAvailable(port) {
 
 async function start() {
   let existingApi = false;
+  let existingHealth = null;
   try {
     const response = await fetch('http://127.0.0.1:3000/api/health');
-    existingApi = response.ok && (await response.json()).status === 'ok';
+    existingHealth = response.ok ? await response.json() : null;
+    existingApi = existingHealth?.status === 'ok';
   } catch { /* No API is running yet. */ }
 
   if (existingApi) {
+    const expectedDatabase = 'mysql';
+    if (existingHealth?.database !== expectedDatabase) {
+      throw new Error(`3000 portunda farklı veya eski veritabanı kullanan API çalışıyor. Eski API’yi kapatıp npm start komutunu yeniden çalıştır (${expectedDatabase}).`);
+    }
     console.log('Mevcut Denge API bağlantısı kullanılacak.');
   } else if (await portIsAvailable(3000, '::')) {
     spawnChild([path.join(projectRoot, 'server', 'index.cjs')], 'Denge API');
