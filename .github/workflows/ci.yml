@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: my-finance
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-password
+          MYSQL_DATABASE: denge_test
+          MYSQL_USER: denge_ci
+          MYSQL_PASSWORD: ci-app-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -pci-root-password"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    env:
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: denge_test
+      MYSQL_USER: denge_ci
+      MYSQL_PASSWORD: ci-app-password
+      MYSQL_SSL: "false"
+      MYSQL_TEST_MODE: "1"
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: my-finance/package-lock.json
+      - run: npm ci
+      - run: npm run test:api
+      - run: npm run test:mysql
+      - run: npx playwright install --with-deps chromium
+      - name: Set up Chromium for Angular unit tests
+        run: node -e 'process.stdout.write("CHROME_BIN=" + require("@playwright/test").chromium.executablePath() + "\n")' >> "$GITHUB_ENV"
+      - name: Angular unit tests
+        run: npm test -- --watch=false --browsers=ChromeHeadless
+      - run: npm run build
+      - run: npm run test:e2e
