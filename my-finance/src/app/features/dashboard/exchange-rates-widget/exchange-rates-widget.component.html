@@ -1,0 +1,30 @@
+<section class="panel rates-panel" aria-labelledby="rates-title">
+  <div class="rates-heading">
+    <div>
+      <span class="eyebrow">CANLI KUR BİLGİSİ</span>
+      <h2 id="rates-title">Döviz kurları</h2>
+      <p>TCMB efektif alış · iş günlerinde 15.30’da ilan edilir</p>
+    </div>
+    <button class="refresh-button" type="button" (click)="refresh()" [disabled]="loading" aria-label="Kurları yenile">
+      <span [class.spinning]="loading" aria-hidden="true">↻</span> Yenile
+    </button>
+  </div>
+  <div class="rate-grid" aria-live="polite">
+    @for (row of rows; track row.currency) {
+      <article class="rate-item">
+        <span class="currency-mark" aria-hidden="true">{{ row.currency.slice(0, 1) }}</span>
+        <div class="rate-copy">
+          <strong>{{ row.currency }} <small>· 1 birim</small></strong>
+          @if (row.quote; as quote) {
+            <span class="rate-value">{{ formatRate(quote.rate) }} ₺</span>
+            <small class="rate-date">Son yayın: {{ format.formatDate(quote.effectiveDate) }}</small>
+          } @else if (loading) {
+            <span class="rate-pending">Kur yükleniyor…</span>
+          } @else {
+            <span class="rate-unavailable">Kur şu an alınamadı</span>
+          }
+        </div>
+      </article>
+    }
+  </div>
+</section>

@@ -21,6 +21,12 @@ export interface Transaction {
   id: number;
   type: TransactionType;
   amount: number;
+  original_amount: number;
+  currency_code: string;
+  exchange_rate: number;
+  tcmb_rate: number | null;
+  rate_source: 'TRY' | 'TCMB' | 'manual';
+  rate_effective_date: string | null;
   description: string;
   category_id: number;
   category: string;
@@ -61,9 +67,36 @@ export interface Settings {
 export interface TransactionFormValue {
   type: TransactionType;
   amount: string | number;
+  original_amount?: number;
+  currency_code: string;
+  exchange_rate: string | number;
+  tcmb_rate: string | number | null;
+  rate_source: 'TRY' | 'TCMB' | 'manual';
+  rate_effective_date: string | null;
   description: string;
   category_id: number;
   transaction_date: string;
+}
+
+export interface ExchangeRate {
+  currency: string;
+  rate: number;
+  unit: number;
+  effectiveDate: string;
+  source: 'TCMB';
+  basis: string;
+}
+
+export interface ExchangeRateLog {
+  id: number;
+  currency_code: string;
+  original_amount: number;
+  try_amount: number;
+  applied_rate: number;
+  tcmb_rate: number | null;
+  rate_source: 'TRY' | 'TCMB' | 'manual';
+  rate_effective_date: string | null;
+  created_at: string;
 }
 
 export interface CategoryFormValue {

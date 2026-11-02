@@ -17,7 +17,7 @@ module.exports = defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:4202',
     browserName: 'chromium',
-    launchOptions: { channel: 'chrome' },
+    launchOptions: process.env.CI ? {} : { channel: 'chrome' },
     viewport: { width: 1440, height: 1000 },
     screenshot: 'only-on-failure',
     trace: 'retain-on-failure',

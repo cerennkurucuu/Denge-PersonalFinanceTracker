@@ -1,15 +1,17 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewChecked, Component, ElementRef, EventEmitter, Input, OnDestroy, Output, ViewChild, inject } from '@angular/core';
+import { AfterViewChecked, Component, ElementRef, EventEmitter, Input, OnDestroy, Output, ViewChild, inject, ChangeDetectionStrategy } from '@angular/core';
 import { AuthUser, FinancePage } from '../../../core/models/finance.models';
 import { FinanceChartService } from '../../../core/services/finance-chart.service';
 import { FinanceFormatService } from '../../../core/services/finance-format.service';
 import { FinanceStoreService } from '../../../core/services/finance-store.service';
+import { ExchangeRatesWidgetComponent } from '../exchange-rates-widget/exchange-rates-widget.component';
 
 @Component({
   selector: 'app-dashboard-page',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, ExchangeRatesWidgetComponent],
   templateUrl: './dashboard-page.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './dashboard-page.component.scss',
 })
 export class DashboardPageComponent implements AfterViewChecked, OnDestroy {

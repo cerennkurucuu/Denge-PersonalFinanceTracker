@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  AuthUser, Category, CategoryFormValue, DashboardSummary, MonthlyReport,
+  AuthUser, Category, CategoryFormValue, DashboardSummary, ExchangeRate, ExchangeRateLog, MonthlyReport,
   Settings, Transaction, TransactionFormValue,
 } from '../models/finance.models';
 
@@ -34,6 +34,18 @@ export class FinanceApiService {
     return this.http.get<Transaction[]>('/api/transactions');
   }
 
+  getExchangeCurrencies(): Observable<{ effectiveDate: string; currencies: string[] }> {
+    return this.http.get<{ effectiveDate: string; currencies: string[] }>('/api/exchange-rates/currencies');
+  }
+
+  getExchangeRate(currency: string, date: string): Observable<ExchangeRate> {
+    return this.http.get<ExchangeRate>(`/api/exchange-rates?currency=${encodeURIComponent(currency)}&date=${encodeURIComponent(date)}`);
+  }
+
+  getRateHistory(id: number): Observable<ExchangeRateLog[]> {
+    return this.http.get<ExchangeRateLog[]>(`/api/transactions/${id}/rate-history`);
+  }
+
   getDashboardSummary(): Observable<DashboardSummary> {
     return this.http.get<DashboardSummary>('/api/dashboard/summary');
   }
@@ -47,7 +59,7 @@ export class FinanceApiService {
   }
 
   saveTransaction(value: TransactionFormValue, id: number | null): Observable<Transaction> {
-    const body = { ...value, amount: value.amount };
+    const body = { ...value };
     return id
       ? this.http.put<Transaction>(`/api/transactions/${id}`, body)
       : this.http.post<Transaction>('/api/transactions', body);

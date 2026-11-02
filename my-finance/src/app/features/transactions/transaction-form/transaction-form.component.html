@@ -1,1 +1,52 @@
-@if(finance.transactionModal){<div class="modal-backdrop" (click)="$event.target===$event.currentTarget&&close()"><form class="modal-card" (ngSubmit)="finance.saveTransaction()"><div class="modal-title"><div><span class="eyebrow">{{finance.editingTransactionId?'DÜZENLE':'YENİ KAYIT'}}</span><h2>{{finance.editingTransactionId?'İşlemi düzenle':'İşlem ekle'}}</h2></div><button type="button" class="close-button" (click)="close()">×</button></div>@if(finance.modalError){<div class="form-error" role="alert">{{finance.modalError}}</div>}<div class="type-switch"><button type="button" [class.selected]="finance.transactionForm.type==='Expense'" (click)="finance.setTransactionType('Expense')">Gider</button><button type="button" [class.selected]="finance.transactionForm.type==='Income'" (click)="finance.setTransactionType('Income')">Gelir</button></div><label>Tutar<div class="amount-input"><span>₺</span><input name="amount" [(ngModel)]="finance.transactionForm.amount" type="number" min="0.01" step="0.01" placeholder="0,00" required></div></label><label>Açıklama<input name="description" [(ngModel)]="finance.transactionForm.description" maxlength="140" placeholder="Örn. Aylık market alışverişi" required></label><div class="form-row"><label>Kategori<select name="category" [(ngModel)]="finance.transactionForm.category_id" required><option [ngValue]="0" disabled>Kategori seç</option>@for(cat of finance.availableCategories;track cat.id){<option [ngValue]="cat.id">{{cat.name}}</option>}</select></label><label>Tarih<input name="date" [(ngModel)]="finance.transactionForm.transaction_date" type="date" required></label></div><div class="modal-actions"><button type="button" class="outline-button" (click)="close()">Vazgeç</button><button type="submit" class="quick-add" (click)="$event.preventDefault();finance.saveTransaction()">{{finance.editingTransactionId?'Değişiklikleri kaydet':'İşlemi kaydet'}}</button></div></form></div>}
+@if (finance.transactionModal) {
+  <div class="modal-backdrop" (click)="$event.target === $event.currentTarget && close()">
+    <form class="modal-card transaction-modal" (ngSubmit)="finance.saveTransaction()">
+      <div class="modal-title">
+        <div><span class="eyebrow">{{ finance.editingTransactionId ? 'DÜZENLE' : 'YENİ KAYIT' }}</span><h2>{{ finance.editingTransactionId ? 'İşlemi düzenle' : 'İşlem ekle' }}</h2></div>
+        <button type="button" class="close-button" (click)="close()" aria-label="Kapat">×</button>
+      </div>
+      @if (finance.modalError) { <div class="form-error" role="alert">{{ finance.modalError }}</div> }
+
+      <div class="type-switch"><button type="button" [class.selected]="finance.transactionForm.type === 'Expense'" (click)="finance.setTransactionType('Expense')">Gider</button><button type="button" [class.selected]="finance.transactionForm.type === 'Income'" (click)="finance.setTransactionType('Income')">Gelir</button></div>
+
+      <div class="form-row currency-row">
+        <label for="transaction-currency">Para birimi
+          <select id="transaction-currency" name="currency" [ngModel]="finance.transactionForm.currency_code" (ngModelChange)="finance.setTransactionCurrency($event)">
+            <option value="TRY">TRY · Türk lirası</option>
+            @for (currency of finance.exchangeCurrencies; track currency) { <option [value]="currency">{{ currency }}</option> }
+          </select>
+        </label>
+        <label for="transaction-amount">Tutar
+          <div class="amount-input"><span>{{ finance.transactionForm.currency_code }}</span><input id="transaction-amount" name="amount" [(ngModel)]="finance.transactionForm.amount" type="number" [attr.min]="finance.transactionAmountStep" [attr.step]="finance.transactionAmountStep" placeholder="0" required></div>
+        </label>
+      </div>
+
+      @if (finance.transactionForm.currency_code !== 'TRY') {
+        <section class="rate-card" aria-label="Döviz kuru">
+          <div class="rate-heading"><strong>TL karşılığı</strong>@if (finance.exchangeRateLoading) { <span>Kur alınıyor…</span> } @else if (finance.exchangeRateMessage) { <span class="rate-status-error">Kur alınamadı</span> } @else if (finance.transactionForm.rate_source === 'manual') { <span class="manual-badge">Elle düzenlendi</span> } @else { <span class="source-badge">TCMB · Efektif alış</span> }</div>
+          <div class="rate-fields">
+            <label for="exchange-rate">1 {{ finance.transactionForm.currency_code }} = <span>₺</span>
+              <input id="exchange-rate" name="exchangeRate" [(ngModel)]="finance.transactionForm.exchange_rate" (ngModelChange)="finance.rateChanged($event)" type="number" min="0.00000001" step="0.00000001" required>
+            </label>
+            <span class="rate-date">Kur tarihi<br><strong>{{ finance.transactionForm.rate_effective_date ? format.formatDate(finance.transactionForm.rate_effective_date) : 'Seçilmedi' }}</strong></span>
+          </div>
+          @if (finance.transactionForm.rate_source === 'TCMB') { <button type="button" class="manual-rate-button" (click)="finance.useManualRate()">Kuru elle düzenle</button> }
+          @if (finance.convertedPreview !== null) { <p class="conversion-preview">Yaklaşık <strong>{{ format.formatAmount(finance.convertedPreview) }}</strong> olarak kaydedilecek</p> }
+          @if (finance.exchangeRateMessage) { <p class="rate-error" role="status">{{ finance.exchangeRateMessage }} Kur alanını elle doldurabilirsin.</p> }
+          @if (finance.rateHistory.length) {
+            <details class="rate-history"><summary>Kur değişiklik geçmişi ({{ finance.rateHistory.length }})</summary>
+              @for (entry of finance.rateHistory; track entry.id) { <p>{{ format.formatCurrency(entry.original_amount, entry.currency_code) }} → {{ format.formatAmount(entry.try_amount) }} · {{ entry.rate_source === 'manual' ? 'elle girilen kur' : entry.rate_source === 'TCMB' ? 'TCMB efektif alış' : 'TL' }} {{ format.formatRate(entry.applied_rate) }} · {{ entry.rate_effective_date ? format.formatDate(entry.rate_effective_date) : '—' }} · kayıt {{ format.formatDate(entry.created_at) }} {{ entry.created_at.slice(11, 16) }}</p> }
+            </details>
+          }
+        </section>
+      }
+
+      <label for="transaction-description">Açıklama<input id="transaction-description" name="description" [(ngModel)]="finance.transactionForm.description" maxlength="140" placeholder="Örn. Aylık market alışverişi" required></label>
+      <div class="form-row">
+        <label for="transaction-category">Kategori<select id="transaction-category" name="category" [(ngModel)]="finance.transactionForm.category_id" required><option [ngValue]="0" disabled>Kategori seç</option>@for (cat of finance.availableCategories; track cat.id) { <option [ngValue]="cat.id">{{ cat.name }}</option> }</select></label>
+        <label for="transaction-date">Tarih<input id="transaction-date" name="date" [ngModel]="finance.transactionForm.transaction_date" (ngModelChange)="finance.setTransactionDate($event)" type="date" required></label>
+      </div>
+      <div class="modal-actions"><button type="button" class="outline-button" (click)="close()">Vazgeç</button><button type="submit" class="quick-add" [disabled]="finance.exchangeRateLoading" (click)="$event.preventDefault(); finance.saveTransaction()">{{ finance.editingTransactionId ? 'Değişiklikleri kaydet' : 'İşlemi kaydet' }}</button></div>
+    </form>
+  </div>
+}

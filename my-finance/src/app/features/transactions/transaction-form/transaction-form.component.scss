@@ -5,6 +5,38 @@
 .type-switch button.selected { background: var(--surface); color: var(--accent-strong); box-shadow: 0 1px 5px rgb(32 26 53 / 10%); }
 .amount-input { display: flex; min-height: 46px; align-items: center; gap: 9px; padding: 0 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--accent); }
 .amount-input input { min-height: 42px; flex: 1; padding: 0; border: 0; font-size: 1.125rem; font-weight: 650; }
-.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.form-row { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.transaction-modal { box-sizing: border-box; width: min(100%, 500px); min-width: 0; max-width: 100%; max-height: min(92vh, 850px); overflow-x: hidden; overflow-y: auto; }
+.transaction-modal > * { min-width: 0; max-width: 100%; }
+.transaction-modal label { min-width: 0; }
+.transaction-modal input:not([type='color']), .transaction-modal select { box-sizing: border-box; min-width: 0; max-width: 100%; }
+.currency-row { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); }
+.amount-input { box-sizing: border-box; width: 100%; min-width: 0; }
+.amount-input span { min-width: 36px; flex: 0 0 auto; color: var(--muted); font-size: .75rem; font-weight: 700; }
+.amount-input input { box-sizing: border-box; width: 100%; min-width: 0; }
+.rate-card { display: grid; min-width: 0; gap: 11px; padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: var(--canvas); }
+.rate-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; font-size: .8125rem; }
+.rate-heading > span { color: var(--muted); font-size: .75rem; }
+.source-badge, .manual-badge { padding: 3px 7px; border-radius: 20px; background: var(--accent-soft); color: var(--accent-strong) !important; }
+.manual-badge { background: #fff0db; color: #925414 !important; }
+.rate-status-error { color: var(--danger) !important; }
+.rate-fields { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 14px; }
+.rate-fields label { display: flex !important; min-width: 0; align-items: center; flex-wrap: wrap; gap: 6px !important; }
+.rate-fields label input { width: 100%; min-width: 0; flex: 1; }
+.rate-date { color: var(--muted); font-size: .75rem; line-height: 1.5; }
+.rate-date strong { color: var(--ink); font-weight: 600; }
+.conversion-preview { color: var(--muted); font-size: .8125rem; }
+.conversion-preview strong { color: var(--ink); }
+.rate-error { color: var(--danger); font-size: .75rem; }
+.manual-rate-button { justify-self: start; padding: 0; border: 0; background: transparent; color: var(--accent-strong); cursor: pointer; font-size: .75rem; font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+.rate-history { border-top: 1px solid var(--line); padding-top: 9px; color: var(--muted); font-size: .75rem; }
+.rate-history summary { cursor: pointer; font-weight: 650; }
+.rate-history p { margin-top: 7px; font-size: .75rem; }
+.transaction-modal .quick-add:disabled { cursor: wait; opacity: .65; }
 
-@media (max-width: 500px) { .form-row { grid-template-columns: 1fr; } }
+@media (max-width: 520px) {
+  .modal-backdrop { padding: 10px; }
+  .transaction-modal { width: min(100%, 500px); padding: 18px; }
+  .form-row, .currency-row { grid-template-columns: minmax(0, 1fr); }
+  .rate-fields { grid-template-columns: minmax(0, 1fr); }
+}

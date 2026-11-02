@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { Category, CategoryFormValue, DashboardSummary, DeletePrompt, MonthlyReport, Transaction, TransactionFormValue, TransactionType } from '../models/finance.models';
+import { Category, CategoryFormValue, DashboardSummary, DeletePrompt, ExchangeRateLog, MonthlyReport, Transaction, TransactionFormValue, TransactionType } from '../models/finance.models';
 import { FinanceApiService } from './finance-api.service';
 import { FinanceFormatService } from './finance-format.service';
 
@@ -34,6 +34,12 @@ export class FinanceStoreService {
   deletePrompt: DeletePrompt | null = null;
   transactionForm: TransactionFormValue = this.emptyTransactionForm();
   categoryForm: CategoryFormValue = this.emptyCategoryForm();
+  exchangeCurrencies: string[] = ['EUR', 'USD', 'GBP'];
+  private exchangeCurrenciesLoaded = false;
+  private exchangeCurrenciesLoading = false;
+  exchangeRateLoading = false;
+  exchangeRateMessage = '';
+  rateHistory: ExchangeRateLog[] = [];
 
   readonly currentDate = this.format.localDate(new Date());
 
@@ -119,6 +125,15 @@ export class FinanceStoreService {
     return this.yearIncome - this.yearExpense;
   }
 
+  get convertedPreview(): number | null {
+    const original = this.format.toMinorUnits(this.transactionForm.amount, this.transactionForm.currency_code);
+    return original === null ? null : this.format.convertCurrencyMinor(original, this.transactionForm.currency_code === 'TRY' ? 1 : this.transactionForm.exchange_rate, this.transactionForm.currency_code);
+  }
+
+  get transactionAmountStep(): string {
+    return (1 / (10 ** this.format.minorUnitDigits(this.transactionForm.currency_code))).toString();
+  }
+
   setReportYear(year: number): void {
     this.reportYear = year;
     this.reportFrom = `${year}-01-01`;
@@ -183,6 +198,9 @@ export class FinanceStoreService {
     this.editingTransactionId = null;
     this.modalError = '';
     this.transactionForm = { ...this.emptyTransactionForm(), type, category_id: this.preferredCategory(type)?.id ?? 0 };
+    this.exchangeRateMessage = '';
+    this.rateHistory = [];
+    this.loadExchangeCurrencies();
     this.transactionModal = true;
   }
 
@@ -196,23 +214,77 @@ export class FinanceStoreService {
     this.modalError = '';
     this.transactionForm = {
       type: item.type,
-      amount: (item.amount / 100).toFixed(2),
+      amount: this.format.formatMinorUnits(item.original_amount, item.currency_code || 'TRY'),
+      currency_code: item.currency_code || 'TRY',
+      exchange_rate: item.exchange_rate || 1,
+      tcmb_rate: item.tcmb_rate,
+      rate_source: item.rate_source || 'TRY',
+      rate_effective_date: item.rate_effective_date,
       description: item.description,
       category_id: item.category_id,
       transaction_date: item.transaction_date.slice(0, 10),
     };
+    this.exchangeRateMessage = '';
+    this.rateHistory = [];
+    this.loadExchangeCurrencies();
+    if (item.currency_code !== 'TRY') {
+      this.api.getRateHistory(item.id).subscribe({ next: history => this.rateHistory = history });
+      this.api.getExchangeRate(item.currency_code, item.transaction_date.slice(0, 10)).subscribe({
+        next: quote => {
+          this.transactionForm.tcmb_rate = quote.rate.toFixed(10);
+          if (item.rate_source === 'TCMB') {
+            this.transactionForm.exchange_rate = quote.rate.toFixed(10);
+            this.transactionForm.rate_effective_date = quote.effectiveDate;
+          }
+        },
+      });
+    }
     this.transactionModal = true;
+  }
+
+  setTransactionCurrency(currency: string): void {
+    this.exchangeRateMessage = '';
+    this.transactionForm.currency_code = currency;
+    if (currency === 'TRY') {
+      this.transactionForm.exchange_rate = 1;
+      this.transactionForm.tcmb_rate = null;
+      this.transactionForm.rate_source = 'TRY';
+      this.transactionForm.rate_effective_date = null;
+      return;
+    }
+    this.transactionForm.exchange_rate = '';
+    this.transactionForm.tcmb_rate = null;
+    this.fetchExchangeRate();
+  }
+
+  setTransactionDate(date: string): void {
+    this.transactionForm.transaction_date = date;
+    if (this.transactionForm.currency_code !== 'TRY') this.fetchExchangeRate();
+  }
+
+  rateChanged(value: string | number): void {
+    const normalized = Number(value);
+    const tcmb = Number(this.transactionForm.tcmb_rate);
+    this.transactionForm.rate_source = this.transactionForm.currency_code === 'TRY'
+      ? 'TRY'
+      : Number.isFinite(normalized) && Number.isFinite(tcmb) && normalized === tcmb ? 'TCMB' : 'manual';
+  }
+
+  useManualRate(): void {
+    if (this.transactionForm.currency_code !== 'TRY') this.transactionForm.rate_source = 'manual';
   }
 
   saveTransaction(): void {
     this.modalError = '';
-    const amount = this.format.toCents(this.transactionForm.amount);
-    if (!this.transactionForm.description.trim() || !this.transactionForm.category_id || amount === null || amount <= 0 || !this.transactionForm.transaction_date) {
+    const originalAmount = this.format.toMinorUnits(this.transactionForm.amount, this.transactionForm.currency_code);
+    const rate = this.transactionForm.currency_code === 'TRY' ? 1 : this.transactionForm.exchange_rate;
+    const amount = originalAmount === null ? null : this.format.convertCurrencyMinor(originalAmount, rate, this.transactionForm.currency_code);
+    if (!this.transactionForm.description.trim() || !this.transactionForm.category_id || originalAmount === null || originalAmount <= 0 || amount === null || amount <= 0 || !this.transactionForm.transaction_date || (this.transactionForm.currency_code !== 'TRY' && (!this.transactionForm.rate_effective_date || !Number(rate)))) {
       this.modalError = 'Açıklama, kategori, geçerli tarih ve sıfırdan büyük (en fazla iki ondalık basamaklı) tutar girin.';
       return;
     }
     const editing = this.editingTransactionId !== null;
-    this.api.saveTransaction({ ...this.transactionForm, amount }, this.editingTransactionId).subscribe({
+    this.api.saveTransaction({ ...this.transactionForm, amount, original_amount: originalAmount, exchange_rate: rate, rate_source: this.transactionForm.currency_code === 'TRY' ? 'TRY' : this.transactionForm.rate_source, tcmb_rate: this.transactionForm.tcmb_rate }, this.editingTransactionId).subscribe({
       next: () => {
         this.transactionModal = false;
         this.modalError = '';
@@ -301,19 +373,36 @@ export class FinanceStoreService {
   }
 
   toggleTheme(): void {
+    const previousTheme = this.dark ? 'dark' : 'light';
     this.dark = !this.dark;
     this.applyTheme();
-    this.api.updateSettings({ theme: this.dark ? 'dark' : 'light' }).subscribe();
+    this.error = '';
+    this.api.updateSettings({ theme: this.dark ? 'dark' : 'light' }).subscribe({
+      next: settings => {
+        this.dark = settings.theme === 'dark';
+        this.applyTheme();
+      },
+      error: response => {
+        this.dark = previousTheme === 'dark';
+        this.applyTheme();
+        this.error = response.error?.error || 'Tema tercihi kaydedilemedi. Yeniden deneyin.';
+      },
+    });
   }
 
   exportCsv(): void {
     const rows = [
-      ['Tarih', 'Tür', 'Açıklama', 'Kategori', 'Tutar (TRY)'],
+      ['Tarih', 'Tür', 'Açıklama', 'Kategori', 'Orijinal tutar', 'Para birimi', 'Uygulanan kur', 'Kur kaynağı', 'Kur tarihi', 'TL karşılığı'],
       ...this.visibleTransactions.map(item => [
         this.format.formatDate(item.transaction_date),
         item.type === 'Income' ? 'Gelir' : 'Gider',
         item.description,
         item.category,
+        this.format.formatMinorUnits(item.original_amount, item.currency_code),
+        item.currency_code,
+        item.exchange_rate,
+        item.rate_source === 'TCMB' ? 'TCMB efektif alış' : item.rate_source === 'manual' ? 'Elle' : '—',
+        item.rate_effective_date || '',
         (item.amount / 100).toFixed(2),
       ]),
     ];
@@ -334,12 +423,17 @@ export class FinanceStoreService {
       ...this.reportCategories.map(category => [category.name, (category.amount / 100).toFixed(2)]),
       [],
       ['İşlem listesi'],
-      ['Tarih', 'Tür', 'Açıklama', 'Kategori', 'Tutar (TRY)'],
+      ['Tarih', 'Tür', 'Açıklama', 'Kategori', 'Orijinal tutar', 'Para birimi', 'Uygulanan kur', 'Kur kaynağı', 'Kur tarihi', 'TL karşılığı'],
       ...this.reportTransactions.map(item => [
         this.format.formatDate(item.transaction_date),
         item.type === 'Income' ? 'Gelir' : 'Gider',
         item.description,
         item.category,
+        this.format.formatMinorUnits(item.original_amount, item.currency_code),
+        item.currency_code,
+        item.exchange_rate,
+        item.rate_source === 'TCMB' ? 'TCMB efektif alış' : item.rate_source === 'manual' ? 'Elle' : '—',
+        item.rate_effective_date || '',
         (item.amount / 100).toFixed(2),
       ]),
     ];
@@ -367,10 +461,51 @@ export class FinanceStoreService {
   }
 
   private emptyTransactionForm(): TransactionFormValue {
-    return { type: 'Expense', amount: '', description: '', category_id: 0, transaction_date: this.format.localDate(new Date()) };
+    return { type: 'Expense', amount: '', currency_code: 'TRY', exchange_rate: 1, tcmb_rate: null, rate_source: 'TRY', rate_effective_date: null, description: '', category_id: 0, transaction_date: this.format.localDate(new Date()) };
+  }
+
+  private loadExchangeCurrencies(): void {
+    if (this.exchangeCurrenciesLoaded || this.exchangeCurrenciesLoading) return;
+    this.exchangeCurrenciesLoading = true;
+    this.api.getExchangeCurrencies().subscribe({
+      next: result => {
+        this.exchangeCurrencies = [...new Set(['EUR', 'USD', 'GBP', ...result.currencies])].sort();
+        this.exchangeCurrenciesLoaded = true;
+        this.exchangeCurrenciesLoading = false;
+      },
+      error: () => {
+        this.exchangeCurrencies = [...new Set(['EUR', 'USD', 'GBP', 'CAD', 'CHF', 'JPY', 'KWD', 'CNY', 'AED'])].sort();
+        this.exchangeCurrenciesLoaded = true;
+        this.exchangeCurrenciesLoading = false;
+      },
+    });
+  }
+
+  private fetchExchangeRate(): void {
+    const { currency_code: currency, transaction_date: date } = this.transactionForm;
+    if (!currency || currency === 'TRY' || !date) return;
+    this.exchangeRateLoading = true;
+    this.exchangeRateMessage = '';
+    this.api.getExchangeRate(currency, date).subscribe({
+      next: quote => {
+        this.transactionForm.tcmb_rate = quote.rate.toFixed(10);
+        this.transactionForm.exchange_rate = quote.rate.toFixed(10);
+        this.transactionForm.rate_effective_date = quote.effectiveDate;
+        this.transactionForm.rate_source = 'TCMB';
+        this.exchangeRateLoading = false;
+      },
+      error: response => {
+        this.exchangeRateLoading = false;
+        this.exchangeRateMessage = response.error?.error || 'TCMB kuru alınamadı. Kuru elle girerek devam edebilirsiniz.';
+        this.transactionForm.exchange_rate = '';
+        this.transactionForm.tcmb_rate = null;
+        this.transactionForm.rate_source = 'manual';
+        this.transactionForm.rate_effective_date = this.transactionForm.transaction_date;
+      },
+    });
   }
 
   private emptyCategoryForm(): CategoryFormValue {
-    return { id: 0, name: '', type: 'Expense', color: '#7c6cf2', icon: 'circle' };
+    return { id: 0, name: '', type: 'Expense', color: '#35644c', icon: 'circle' };
   }
 }

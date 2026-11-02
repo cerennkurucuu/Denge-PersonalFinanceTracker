@@ -20,7 +20,7 @@ function portIsAvailable(port, host) {
 }
 
 function spawnChild(args, name) {
-  const child = spawn(process.execPath, args, { cwd: projectRoot, stdio: 'inherit', env: process.env });
+  const child = spawn(process.execPath, [...process.execArgv, ...args], { cwd: projectRoot, stdio: 'inherit', env: process.env });
   children.push(child);
   child.on('error', (error) => { console.error(`${name} başlatılamadı:`, error); stop(1); });
   child.on('exit', (code, signal) => {

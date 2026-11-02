@@ -1,0 +1,22 @@
+:host { display: block; margin-bottom: 16px; }
+.rates-panel { padding: 18px 22px; }
+.rates-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.rates-heading h2 { margin-top: 4px; font-size: 1rem; }
+.rates-heading p { margin-top: 3px; color: var(--muted); font-size: .75rem; }
+.refresh-button { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; font-size: .75rem; }
+.refresh-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.refresh-button:disabled { cursor: wait; opacity: .7; }
+.refresh-button span { font-size: 1rem; }
+.spinning { animation: spin .8s linear infinite; }
+.rate-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.rate-item { display: flex; min-width: 0; align-items: center; gap: 11px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.currency-mark { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: .875rem; font-weight: 750; }
+.rate-copy { display: grid; min-width: 0; gap: 3px; }
+.rate-copy > strong { font-size: .8125rem; font-weight: 650; }
+.rate-copy > strong small { color: var(--muted); font-size: .6875rem; font-weight: 450; }
+.rate-value { font-size: 1rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+.rate-date, .rate-pending, .rate-unavailable { color: var(--muted); font-size: .6875rem; }
+.rate-unavailable { color: var(--warning, #bd7d23); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 640px) { .rates-panel { padding: 16px; } .rate-grid { gap: 8px; } .rate-item { align-items: flex-start; flex-direction: column; gap: 8px; padding: 10px; } .rate-copy > strong small { display: none; } .rate-value { font-size: .875rem; } }
+@media (max-width: 380px) { .rate-grid { grid-template-columns: 1fr; } .rate-item { align-items: center; flex-direction: row; } }

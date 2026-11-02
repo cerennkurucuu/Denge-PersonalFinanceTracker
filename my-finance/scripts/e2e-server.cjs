@@ -10,6 +10,7 @@ process.env.MYSQL_TEST_MODE = '1';
 
 const apiPort = 3301;
 const clientPort = 4202;
+process.env.APP_ORIGIN = `http://127.0.0.1:${clientPort}`;
 const sessionToken = 'denge-playwright-session-token';
 let apiServer;
 let client;
@@ -37,7 +38,7 @@ async function seedTestUser() {
     const [result] = await db.execute('INSERT INTO categories(user_id,name,type,color,icon,is_default,is_preferred) VALUES (?,?,?,?,?,1,?)', [testUserId, name, type, color, icon, preferred]);
     return Number(result.insertId);
   };
-  const marketId = await addCategory('Market', 'Expense', '#8b5cf6', 'basket', 1);
+  const marketId = await addCategory('Market', 'Expense', '#35644c', 'basket', 1);
   const transportId = await addCategory('Ulaşım', 'Expense', '#f59e0b', 'car', 0);
   const salaryId = await addCategory('Maaş', 'Income', '#10b981', 'briefcase', 1);
   await db.execute('INSERT INTO settings(user_id,currency,theme,language) VALUES (?,?,?,?)', [testUserId, 'TRY', 'light', 'tr']);
@@ -45,9 +46,10 @@ async function seedTestUser() {
   await db.execute('INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (?,?,?)', [tokenHash, testUserId, Math.floor(Date.now() / 1000) + 3600]);
 
   const year = new Date().getFullYear();
-  await db.execute('INSERT INTO transactions(user_id,type,amount,description,category_id,transaction_date) VALUES (?,?,?,?,?,?)', [testUserId, 'Income', 8_500_000, 'Örnek maaş', salaryId, `${year}-01-05`]);
-  await db.execute('INSERT INTO transactions(user_id,type,amount,description,category_id,transaction_date) VALUES (?,?,?,?,?,?)', [testUserId, 'Expense', 1_200_000, 'Ocak market alışverişi', marketId, `${year}-01-10`]);
-  await db.execute('INSERT INTO transactions(user_id,type,amount,description,category_id,transaction_date) VALUES (?,?,?,?,?,?)', [testUserId, 'Expense', 150_000, 'Şubat ulaşım kartı', transportId, `${year}-02-15`]);
+  const seed = async (type, amount, description, categoryId, date) => db.execute('INSERT INTO transactions(user_id,type,amount,original_amount,currency_code,exchange_rate,rate_source,description,category_id,transaction_date) VALUES (?,?,?,? ,\'TRY\',1,\'TRY\',?,?,?)', [testUserId, type, amount, amount, description, categoryId, date]);
+  await seed('Income', 8_500_000, 'Örnek maaş', salaryId, `${year}-01-05`);
+  await seed('Expense', 1_200_000, 'Ocak market alışverişi', marketId, `${year}-01-10`);
+  await seed('Expense', 150_000, 'Şubat ulaşım kartı', transportId, `${year}-02-15`);
 }
 
 async function waitForClient() {
@@ -85,9 +87,11 @@ async function start() {
     apiServer = app.listen(apiPort, '127.0.0.1');
     apiServer.on('error', error => { console.error('E2E API açılamadı:', error.code || 'UNKNOWN'); shutdown(1); });
     const angularCli = require.resolve('@angular/cli/bin/ng.js', { paths: [projectRoot] });
+    const clientEnv = { ...process.env };
+    delete clientEnv.PORT;
     client = spawn(process.execPath, [
       angularCli, 'serve', '--host', '127.0.0.1', '--port', String(clientPort), '--proxy-config', 'proxy.e2e.conf.json',
-    ], { cwd: projectRoot, stdio: 'inherit', env: process.env });
+    ], { cwd: projectRoot, stdio: 'inherit', env: clientEnv });
     client.on('error', error => { console.error('E2E Angular başlatılamadı:', error.code || 'UNKNOWN'); shutdown(1); });
     client.on('exit', code => { if (!shuttingDown) shutdown(code || 1); });
     await waitForClient();

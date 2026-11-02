@@ -1,4 +1,4 @@
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, withXhr } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { AppComponent } from './app.component';
@@ -12,6 +12,7 @@ function flushPageReads(http: HttpTestingController): void {
       { id: 2, name: 'Maaş', type: 'Income', color: '#10b981', icon: 'briefcase', is_default: 1, is_preferred: 1 },
       { id: 3, name: 'Evcil hayvan', type: 'Expense', color: '#f59e0b', icon: 'paw', is_default: 0, is_preferred: 0 },
     ]);
+    else if (request.request.url === '/api/exchange-rates/currencies') request.flush({ effectiveDate: '2026-11-02', currencies: ['EUR', 'USD'] });
     else if (request.request.url === '/api/transactions') request.flush([]);
     else if (request.request.url === '/api/dashboard/summary') request.flush({ balance: 0, income: 0, expense: 0, monthIncome: 0, monthExpense: 0, previousMonthIncome: 0, previousMonthExpense: 0, recent: [], categories: [] });
     else if (request.request.url.startsWith('/api/reports/monthly')) request.flush([]);
@@ -30,7 +31,7 @@ function initializeSignedIn(fixture: ComponentFixture<AppComponent>, http: HttpT
 
 describe('AppComponent', () => {
   beforeEach(async () => {
-    await TestBed.configureTestingModule({ imports: [AppComponent], providers: [provideHttpClient(), provideHttpClientTesting()] }).compileComponents();
+    await TestBed.configureTestingModule({ imports: [AppComponent], providers: [provideHttpClient(withXhr()), provideHttpClientTesting()] }).compileComponents();
   });
 
   it('renders the Turkish Denge finance dashboard', () => {
@@ -48,8 +49,12 @@ describe('AppComponent', () => {
     initializeSignedIn(fixture, TestBed.inject(HttpTestingController));
     const root = fixture.nativeElement as HTMLElement;
     root.querySelector<HTMLButtonElement>('.topbar .quick-add')!.click();
+    flushPageReads(TestBed.inject(HttpTestingController));
     fixture.detectChanges();
     expect(root.querySelector('.modal-card')).not.toBeNull();
+    for (const currency of ['EUR', 'USD', 'GBP']) {
+      expect(root.querySelector(`#transaction-currency option[value="${currency}"]`)).not.toBeNull();
+    }
 
     TestBed.inject(FinanceStoreService).transactionModal = false;
     component.setPage('categories');
@@ -67,6 +72,7 @@ describe('AppComponent', () => {
     const finance = TestBed.inject(FinanceStoreService);
 
     finance.openNewTransaction();
+    flushPageReads(http);
     expect(finance.transactionForm.category_id).toBe(1);
     finance.setTransactionType('Income');
     expect(finance.transactionForm.category_id).toBe(2);
@@ -78,9 +84,9 @@ describe('AppComponent', () => {
     initializeSignedIn(fixture, http);
     const finance = TestBed.inject(FinanceStoreService);
     finance.transactions = [
-      { id: 1, type: 'Income', amount: 10000, description: 'Mayıs maaşı', category_id: 2, category: 'Maaş', category_color: '#10b981', transaction_date: '2026-05-05' },
-      { id: 2, type: 'Expense', amount: 2500, description: 'Mayıs market', category_id: 1, category: 'Market', category_color: '#8b5cf6', transaction_date: '2026-05-08' },
-      { id: 3, type: 'Expense', amount: 1500, description: 'Haziran ulaşım', category_id: 4, category: 'Ulaşım', category_color: '#f59e0b', transaction_date: '2026-06-04' },
+      { id: 1, type: 'Income', amount: 10000, original_amount: 10000, currency_code: 'TRY', exchange_rate: 1, tcmb_rate: null, rate_source: 'TRY', rate_effective_date: null, description: 'Mayıs maaşı', category_id: 2, category: 'Maaş', category_color: '#10b981', transaction_date: '2026-05-05' },
+      { id: 2, type: 'Expense', amount: 2500, original_amount: 2500, currency_code: 'TRY', exchange_rate: 1, tcmb_rate: null, rate_source: 'TRY', rate_effective_date: null, description: 'Mayıs market', category_id: 1, category: 'Market', category_color: '#8b5cf6', transaction_date: '2026-05-08' },
+      { id: 3, type: 'Expense', amount: 1500, original_amount: 1500, currency_code: 'TRY', exchange_rate: 1, tcmb_rate: null, rate_source: 'TRY', rate_effective_date: null, description: 'Haziran ulaşım', category_id: 4, category: 'Ulaşım', category_color: '#f59e0b', transaction_date: '2026-06-04' },
     ];
 
     finance.transactionFrom = '2026-06-01';
@@ -116,6 +122,22 @@ describe('AppComponent', () => {
     expect(TestBed.inject(FinanceFormatService).formatAmount(123456)).toContain('1.234,56');
   });
 
+  it('reverts the theme and reports an error when saving the preference fails', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const http = TestBed.inject(HttpTestingController);
+    initializeSignedIn(fixture, http);
+    const finance = TestBed.inject(FinanceStoreService);
+
+    finance.toggleTheme();
+    expect(finance.dark).toBeTrue();
+    expect(document.documentElement.dataset['theme']).toBe('dark');
+    http.expectOne('/api/settings').flush({ error: 'Database unavailable' }, { status: 503, statusText: 'Service Unavailable' });
+
+    expect(finance.dark).toBeFalse();
+    expect(document.documentElement.dataset['theme']).toBe('light');
+    expect(finance.error).toBe('Database unavailable');
+  });
+
   it('converts numeric and text decimal inputs to kuruş without floating-point rounding', () => {
     const component = TestBed.createComponent(AppComponent).componentInstance;
     const format = TestBed.inject(FinanceFormatService);
@@ -125,13 +147,25 @@ describe('AppComponent', () => {
     expect(format.toCents('1.005')).toBeNull();
   });
 
+  it('converts foreign-currency minor units with exact integer arithmetic', () => {
+    const format = TestBed.inject(FinanceFormatService);
+    expect(format.convertMinor(12_345, '32.5000000000')).toBe(401_213);
+    expect(format.convertMinor(10_000, '0.285')).toBe(2_850);
+    expect(format.toMinorUnits('125', 'JPY')).toBe(125);
+    expect(format.toMinorUnits('125.5', 'JPY')).toBeNull();
+    expect(format.toMinorUnits('12.345', 'KWD')).toBe(12345);
+    expect(format.convertCurrencyMinor(100, '0.285', 'JPY')).toBe(2850);
+    expect(format.formatCurrency(1234, 'USD')).toContain('12,34');
+    expect(format.formatRate(40.5)).toBe('40,50');
+  });
+
   it('posts a numeric transaction amount as integer kuruş and refreshes data', async () => {
     const fixture = TestBed.createComponent(AppComponent);
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
     initializeSignedIn(fixture, http);
     const finance = TestBed.inject(FinanceStoreService);
-    finance.transactionForm = { type: 'Expense', amount: 1.01, description: 'Test market işlemi', category_id: 1, transaction_date: '2026-11-01' };
+    finance.transactionForm = { type: 'Expense', amount: 1.01, currency_code: 'TRY', exchange_rate: 1, tcmb_rate: null, rate_source: 'TRY', rate_effective_date: null, description: 'Test market işlemi', category_id: 1, transaction_date: '2026-11-01' };
     finance.transactionModal = true;
     fixture.detectChanges();
     await fixture.whenStable();
@@ -142,6 +176,7 @@ describe('AppComponent', () => {
       .map(field => `${field.name}: ${field.value || '(empty)'}`);
     expect(invalidFields).withContext('invalid transaction fields').toEqual([]);
     form.querySelector<HTMLButtonElement>('.quick-add')!.click();
+    expect(finance.modalError).withContext('transaction form validation').toBe('');
 
     const create = http.expectOne('/api/transactions');
     expect(create.request.method).toBe('POST');
@@ -158,7 +193,7 @@ describe('AppComponent', () => {
     const http = TestBed.inject(HttpTestingController);
     initializeSignedIn(fixture, http);
     const finance = TestBed.inject(FinanceStoreService);
-    finance.categoryForm = { id: 0, name: 'Ek ders', type: 'Income', color: '#7c6cf2', icon: 'circle' };
+    finance.categoryForm = { id: 0, name: 'Ek ders', type: 'Income', color: '#35644c', icon: 'circle' };
     finance.categoryModal = true;
     fixture.detectChanges();
     await fixture.whenStable();
@@ -169,7 +204,7 @@ describe('AppComponent', () => {
 
     const create = http.expectOne('/api/categories');
     expect(create.request.method).toBe('POST');
-    expect(create.request.body).toEqual({ name: 'Ek ders', type: 'Income', color: '#7c6cf2', icon: 'circle' });
+    expect(create.request.body).toEqual({ name: 'Ek ders', type: 'Income', color: '#35644c', icon: 'circle' });
     create.flush({ id: 16 });
     flushPageReads(http);
     expect(finance.categoryModal).toBeFalse();
@@ -212,7 +247,7 @@ describe('AppComponent', () => {
     const http = TestBed.inject(HttpTestingController);
     initializeSignedIn(fixture, http);
     const finance = TestBed.inject(FinanceStoreService);
-    finance.transactions = [{ id: 1, type: 'Expense', amount: 100, description: 'Gizli kayıt', category_id: 1, category: 'Market', category_color: '#8b5cf6', transaction_date: '2026-11-01' }];
+    finance.transactions = [{ id: 1, type: 'Expense', amount: 100, original_amount: 100, currency_code: 'TRY', exchange_rate: 1, tcmb_rate: null, rate_source: 'TRY', rate_effective_date: null, description: 'Gizli kayıt', category_id: 1, category: 'Market', category_color: '#8b5cf6', transaction_date: '2026-11-01' }];
     fixture.detectChanges();
     (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>('.logout-button')!.click();
     http.expectOne('/api/auth/logout').flush(null, { status: 204, statusText: 'No Content' });
