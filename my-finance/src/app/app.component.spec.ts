@@ -13,6 +13,10 @@ function flushPageReads(http: HttpTestingController): void {
       { id: 3, name: 'Evcil hayvan', type: 'Expense', color: '#f59e0b', icon: 'paw', is_default: 0, is_preferred: 0 },
     ]);
     else if (request.request.url === '/api/exchange-rates/currencies') request.flush({ effectiveDate: '2026-11-02', currencies: ['EUR', 'USD'] });
+    else if (request.request.url.startsWith('/api/exchange-rates?')) {
+      const params = new URLSearchParams(request.request.url.split('?')[1]);
+      request.flush({ currency: params.get('currency'), rate: 35, unit: 1, effectiveDate: params.get('date'), source: 'TCMB', basis: 'BanknoteBuying' });
+    }
     else if (request.request.url === '/api/transactions') request.flush([]);
     else if (request.request.url === '/api/dashboard/summary') request.flush({ balance: 0, income: 0, expense: 0, monthIncome: 0, monthExpense: 0, previousMonthIncome: 0, previousMonthExpense: 0, recent: [], categories: [] });
     else if (request.request.url.startsWith('/api/reports/monthly')) request.flush([]);
@@ -159,7 +163,7 @@ describe('AppComponent', () => {
     expect(format.formatRate(40.5)).toBe('40,50');
   });
 
-  it('posts a numeric transaction amount as integer kuruş and refreshes data', async () => {
+  it('posts a numeric transaction amount as integer kuruş and refreshes data', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
@@ -168,9 +172,19 @@ describe('AppComponent', () => {
     finance.transactionForm = { type: 'Expense', amount: 1.01, currency_code: 'TRY', exchange_rate: 1, tcmb_rate: null, rate_source: 'TRY', rate_effective_date: null, description: 'Test market işlemi', category_id: 1, transaction_date: '2026-11-01' };
     finance.transactionModal = true;
     fixture.detectChanges();
-    await fixture.whenStable();
-    fixture.detectChanges();
     const form = (fixture.nativeElement as HTMLElement).querySelector<HTMLFormElement>('form.modal-card')!;
+    const setField = (selector: string, value: string) => {
+      const field = form.querySelector<HTMLInputElement | HTMLSelectElement>(selector)!;
+      field.value = value;
+      field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+    };
+    setField('#transaction-amount', '1.01');
+    setField('#transaction-description', 'Test market işlemi');
+    const category = form.querySelector<HTMLSelectElement>('#transaction-category')!;
+    category.selectedIndex = 1;
+    category.dispatchEvent(new Event('change', { bubbles: true }));
+    setField('#transaction-date', '2026-11-01');
+    fixture.detectChanges();
     const invalidFields = Array.from(form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select'))
       .filter(field => !field.checkValidity())
       .map(field => `${field.name}: ${field.value || '(empty)'}`);
@@ -187,7 +201,7 @@ describe('AppComponent', () => {
     expect(finance.notice).toBe('İşlem eklendi.');
   });
 
-  it('posts a new income category and refreshes data', async () => {
+  it('posts a new income category and refreshes data', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const component = fixture.componentInstance;
     const http = TestBed.inject(HttpTestingController);
@@ -196,9 +210,11 @@ describe('AppComponent', () => {
     finance.categoryForm = { id: 0, name: 'Ek ders', type: 'Income', color: '#35644c', icon: 'circle' };
     finance.categoryModal = true;
     fixture.detectChanges();
-    await fixture.whenStable();
-    fixture.detectChanges();
     const form = (fixture.nativeElement as HTMLElement).querySelector<HTMLFormElement>('form.small-modal')!;
+    const name = form.querySelector<HTMLInputElement>('#category-name')!;
+    name.value = 'Ek ders';
+    name.dispatchEvent(new Event('input', { bubbles: true }));
+    fixture.detectChanges();
     expect(form.checkValidity()).toBeTrue();
     form.querySelector<HTMLButtonElement>('.quick-add')!.click();
 
