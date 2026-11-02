@@ -1,4 +1,8 @@
 const { defineConfig } = require('@playwright/test');
+const crypto = require('node:crypto');
+
+const mysqlE2eRunId = crypto.randomUUID();
+process.env.MYSQL_E2E_RUN_ID = mysqlE2eRunId;
 
 module.exports = defineConfig({
   testDir: './e2e',
@@ -9,6 +13,7 @@ module.exports = defineConfig({
   expect: { timeout: 8_000 },
   reporter: 'list',
   outputDir: 'test-results/e2e',
+  globalTeardown: './scripts/e2e-cleanup.cjs',
   use: {
     baseURL: 'http://127.0.0.1:4202',
     browserName: 'chromium',
@@ -22,5 +27,6 @@ module.exports = defineConfig({
     url: 'http://127.0.0.1:4202/api/health',
     reuseExistingServer: false,
     timeout: 120_000,
+    env: { MYSQL_E2E_RUN_ID: mysqlE2eRunId },
   },
 });

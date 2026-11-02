@@ -29,7 +29,8 @@ async function cleanupTestUser() {
 }
 
 async function seedTestUser() {
-  const suffix = crypto.randomBytes(8).toString('hex');
+  const suffix = process.env.MYSQL_E2E_RUN_ID;
+  if (!suffix) throw new Error('Missing isolated MySQL E2E run identifier.');
   const [user] = await db.execute('INSERT INTO users(google_sub,email,name) VALUES (?,?,?)', [`playwright-test-${suffix}`, `playwright-test-${suffix}@example.invalid`, 'Deniz Örnek']);
   testUserId = Number(user.insertId);
   const addCategory = async (name, type, color, icon, preferred) => {
