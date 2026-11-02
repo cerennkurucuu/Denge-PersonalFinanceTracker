@@ -19,9 +19,16 @@
           @for (icon of iconOptions; track icon.value) { <option [value]="icon.value">{{ icon.symbol }} {{ icon.label }}</option> }
         </select>
       </label>
-      <label for="category-color">Renk
-        <input id="category-color" name="catcolor" [(ngModel)]="finance.categoryForm.color" type="color">
-      </label>
+      <label for="category-color">Kategori rengi</label>
+      <div class="category-color-picker">
+        <input id="category-color" name="catcolor" [(ngModel)]="finance.categoryForm.color" type="color" aria-label="Renk seçici">
+        <input id="category-color-hex" name="catcolorhex" [(ngModel)]="finance.categoryForm.color" type="text" pattern="^#[0-9a-fA-F]{6}$" maxlength="7" aria-label="Renk kodu" autocomplete="off">
+      </div>
+      <div class="color-presets" aria-label="Hazır renkler">
+        @for (color of colorPresets; track color) {
+          <button type="button" class="color-preset" [style.backgroundColor]="color" [attr.aria-label]="color + ' rengini seç'" [attr.aria-pressed]="finance.categoryForm.color.toLowerCase() === color" (click)="finance.categoryForm.color = color"></button>
+        }
+      </div>
       <div class="modal-actions">
         <button type="button" class="outline-button" (click)="close()">Vazgeç</button>
         <button type="submit" class="quick-add" (click)="$event.preventDefault(); finance.saveCategory()">Kaydet</button>

@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, Output } from '@angular/core';
+import { Component, EventEmitter, Input, Output, ChangeDetectionStrategy } from '@angular/core';
 import { AuthUser, FinancePage } from '../../core/models/finance.models';
 
 @Component({
@@ -7,6 +7,7 @@ import { AuthUser, FinancePage } from '../../core/models/finance.models';
   standalone: true,
   imports: [CommonModule],
   templateUrl: './sidebar.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './sidebar.component.scss',
 })
 export class SidebarComponent {

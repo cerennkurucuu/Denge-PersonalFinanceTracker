@@ -14,7 +14,7 @@
     </header>
     @for (category of finance.expenseCategories; track category.id) {
       <div class="category-item">
-        <span class="category-icon-badge" [style.background]="category.color + '20'" [style.color]="category.color" aria-hidden="true">{{ iconSymbol(category.icon) }}</span>
+        <span class="category-icon-badge" [style.color]="category.color" aria-hidden="true">{{ iconSymbol(category.icon) }}</span>
         <strong>{{ category.name }}</strong>
         <button
           type="button"
@@ -42,7 +42,7 @@
     </header>
     @for (category of finance.incomeCategories; track category.id) {
       <div class="category-item">
-        <span class="category-icon-badge" [style.background]="category.color + '20'" [style.color]="category.color" aria-hidden="true">{{ iconSymbol(category.icon) }}</span>
+        <span class="category-icon-badge" [style.color]="category.color" aria-hidden="true">{{ iconSymbol(category.icon) }}</span>
         <strong>{{ category.name }}</strong>
         <button
           type="button"

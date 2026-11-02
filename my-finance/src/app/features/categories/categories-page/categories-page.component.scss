@@ -2,7 +2,7 @@
 .category-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .category-list { min-height: 320px; }
 .category-item { display: flex; min-height: 52px; align-items: center; gap: 10px; border-top: 1px solid var(--line); font-size: .875rem; }
-.category-icon-badge { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 9px; font-size: .9375rem; }
+.category-icon-badge { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-size: .9375rem; }
 .category-item strong { min-width: 55px; flex: 1; font-weight: 600; }
 .category-item button { padding: 5px 2px; border: 0; background: transparent; color: var(--accent-strong); cursor: pointer; font-size: .75rem; font-weight: 600; white-space: nowrap; }
 .category-item .delete-category { color: var(--danger); }

@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewChecked, Component, ElementRef, OnDestroy, ViewChild, inject } from '@angular/core';
+import { AfterViewChecked, Component, ElementRef, OnDestroy, ViewChild, inject, ChangeDetectionStrategy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { FinanceChartService } from '../../../core/services/finance-chart.service';
 import { FinanceFormatService } from '../../../core/services/finance-format.service';
@@ -10,6 +10,7 @@ import { FinanceStoreService } from '../../../core/services/finance-store.servic
   standalone: true,
   imports: [CommonModule, FormsModule],
   templateUrl: './reports-page.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './reports-page.component.scss',
 })
 export class ReportsPageComponent implements AfterViewChecked, OnDestroy {

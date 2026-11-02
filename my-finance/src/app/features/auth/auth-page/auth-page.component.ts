@@ -1,4 +1,4 @@
-import { AfterViewChecked, Component, ElementRef, EventEmitter, Output, ViewChild, inject } from '@angular/core';
+import { AfterViewChecked, Component, ElementRef, EventEmitter, Output, ViewChild, inject, ChangeDetectionStrategy } from '@angular/core';
 import { AuthUser } from '../../../core/models/finance.models';
 import { AuthService } from '../../../core/services/auth.service';
 
@@ -6,6 +6,7 @@ import { AuthService } from '../../../core/services/auth.service';
   selector: 'app-auth-page',
   standalone: true,
   templateUrl: './auth-page.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './auth-page.component.scss',
 })
 export class AuthPageComponent implements AfterViewChecked {

@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, Output, inject } from '@angular/core';
+import { Component, EventEmitter, Input, Output, inject, ChangeDetectionStrategy } from '@angular/core';
 import { FinancePage } from '../../core/models/finance.models';
 import { FinanceFormatService } from '../../core/services/finance-format.service';
 
@@ -8,6 +8,7 @@ import { FinanceFormatService } from '../../core/services/finance-format.service
   standalone: true,
   imports: [CommonModule],
   templateUrl: './topbar.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './topbar.component.scss',
 })
 export class TopbarComponent {

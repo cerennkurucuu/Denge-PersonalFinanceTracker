@@ -1,2 +1,8 @@
 :host { display: contents; }
 .modal-card.small-modal { width: min(100%, 390px); }
+.category-color-picker { display: grid; grid-template-columns: 52px 1fr; gap: 10px; }
+.category-color-picker input[type='color'] { width: 52px; min-height: 42px; padding: 4px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); cursor: pointer; }
+.category-color-picker input[type='text'] { min-width: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; text-transform: uppercase; }
+.color-presets { display: flex; flex-wrap: wrap; gap: 9px; margin-top: -9px; }
+.color-preset { width: 25px; height: 25px; border: 2px solid var(--surface); border-radius: 50%; box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
+.color-preset[aria-pressed='true'] { box-shadow: 0 0 0 2px var(--ink); }

@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, inject, ChangeDetectionStrategy } from '@angular/core';
 import { AuthUser, FinancePage } from './core/models/finance.models';
 import { AuthService } from './core/services/auth.service';
 import { FinanceStoreService } from './core/services/finance-store.service';
@@ -14,7 +14,8 @@ import { SidebarComponent } from './layout/sidebar/sidebar.component';
 import { TopbarComponent } from './layout/topbar/topbar.component';
 import { DeleteConfirmationComponent } from './shared/delete-confirmation/delete-confirmation.component';
 
-@Component({ selector:'app-root',standalone:true,imports:[CommonModule,AuthPageComponent,SidebarComponent,TopbarComponent,DashboardPageComponent,TransactionsPageComponent,ReportsPageComponent,CategoriesPageComponent,TransactionFormComponent,CategoryFormComponent,DeleteConfirmationComponent],templateUrl:'./app.component.html',styleUrl:'./app.component.scss' })
+@Component({ selector:'app-root',standalone:true,imports:[CommonModule,AuthPageComponent,SidebarComponent,TopbarComponent,DashboardPageComponent,TransactionsPageComponent,ReportsPageComponent,CategoriesPageComponent,TransactionFormComponent,CategoryFormComponent,DeleteConfirmationComponent],templateUrl:'./app.component.html',changeDetection: ChangeDetectionStrategy.Eager,
+styleUrl:'./app.component.scss' })
 export class AppComponent implements OnInit {
   readonly auth=inject(AuthService); readonly finance=inject(FinanceStoreService);
   active:FinancePage='dashboard'; user:AuthUser|null=null;
