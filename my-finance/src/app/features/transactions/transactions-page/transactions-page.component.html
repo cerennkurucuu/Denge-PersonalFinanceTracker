@@ -1,31 +1,52 @@
 <section class="welcome-row">
   <div><div class="eyebrow">HESAP HAREKETLERİ</div><h1>İşlemlerin</h1><p>Gelir ve giderlerini tek bir yerde takip et.</p></div>
-  <div class="row-actions"><button class="outline-button" (click)="finance.exportCsv()">↓ CSV indir</button><button class="quick-add" (click)="finance.openNewTransaction()">＋ Yeni işlem</button></div>
+  <div class="row-actions"><button class="outline-button" (click)="finance.exportCsv()">↓ CSV indir</button><button class="outline-button" type="button" (click)="statementOpen = true">⇧ Ekstre aktar</button><button class="quick-add" (click)="finance.openNewTransaction()">＋ Yeni işlem</button></div>
 </section>
+@if (statementOpen) {
+  @defer (when statementOpen) {
+    <app-statement-import (close)="statementOpen = false" (imported)="onStatementImported()"/>
+  } @placeholder {
+    <p class="import-loading" role="status">Ekstre içe aktarma hazırlanıyor…</p>
+  }
+}
 <section class="panel full-panel">
-  <div class="panel-heading"><div><h2>Tüm işlemler</h2><p>{{finance.visibleTransactions.length}} kayıt listeleniyor</p></div></div>
+  <div class="panel-heading"><div><h2>Tüm işlemler</h2><p>{{finance.visibleTransactions.length}} kayıt listeleniyor</p></div>
+    @if (selectedVisibleTransactions.length) {
+      <div class="selection-actions"><span>{{selectedVisibleTransactions.length}} işlem seçildi</span><button class="delete-selected" type="button" (click)="askBulkDelete()">Seçilenleri sil</button></div>
+    }
+  </div>
   <div class="transaction-filters" role="group" aria-label="İşlem filtreleri">
     <label class="filter-select">İşlem türü
-      <select class="select-chip" [(ngModel)]="finance.transactionFilter" aria-label="İşlem türüne göre filtrele">
+      <select class="select-chip" [(ngModel)]="finance.transactionFilter" (ngModelChange)="clearSelection()" aria-label="İşlem türüne göre filtrele">
         <option value="All">Tüm işlemler</option><option value="Income">Gelirler</option><option value="Expense">Giderler</option>
       </select>
     </label>
     <label class="filter-date">Başlangıç tarihi
-      <input type="date" [(ngModel)]="finance.transactionFrom" aria-label="Başlangıç tarihi">
+      <input type="date" [(ngModel)]="finance.transactionFrom" (ngModelChange)="clearSelection()" aria-label="Başlangıç tarihi">
     </label>
     <label class="filter-date">Bitiş tarihi
-      <input type="date" [(ngModel)]="finance.transactionTo" aria-label="Bitiş tarihi">
+      <input type="date" [(ngModel)]="finance.transactionTo" (ngModelChange)="clearSelection()" aria-label="Bitiş tarihi">
     </label>
-    <button class="outline-button clear-filters" type="button" (click)="finance.clearTransactionFilters()">Filtreleri temizle</button>
+    <button class="outline-button clear-filters" type="button" (click)="finance.clearTransactionFilters(); clearSelection()">Filtreleri temizle</button>
   </div>
   @if (finance.hasInvalidTransactionRange) {
     <p class="filter-error" role="alert">Başlangıç tarihi, bitiş tarihinden sonra olamaz.</p>
   }
-  <div class="table-scroll"><table><thead><tr><th>İŞLEM</th><th>KATEGORİ</th><th>TARİH</th><th>TUTAR</th><th></th></tr></thead><tbody>
+  <div class="table-scroll"><table><thead><tr><th class="selection-cell"><input type="checkbox" [checked]="allVisibleSelected" [indeterminate]="someVisibleSelected && !allVisibleSelected" (change)="toggleVisibleSelection($any($event.target).checked)" aria-label="Görünen işlemlerin tümünü seç"></th><th>İŞLEM</th><th>KATEGORİ</th><th>TARİH</th><th>TUTAR</th><th></th></tr></thead><tbody>
     @for (item of finance.visibleTransactions; track item.id) {
-      <tr><td><strong>{{item.description}}</strong><small>{{item.type==='Income'?'Gelir':'Gider'}}</small></td><td><span class="table-category"><i [style.background]="item.category_color"></i>{{item.category}}</span></td><td>{{format.formatDate(item.transaction_date)}}</td><td [class.income-text]="item.type==='Income'"><strong>{{item.type==='Income'?'+':'−'}}{{format.formatCurrency(item.original_amount,item.currency_code)}}</strong>@if(item.currency_code!=='TRY'){<small class="try-equivalent">≈ {{format.formatAmount(item.amount)}} · 1 {{item.currency_code}} = {{format.formatRate(item.exchange_rate)}} ₺ · {{item.rate_source==='manual'?'elle kur':'TCMB'}} {{format.formatDate(item.rate_effective_date || item.transaction_date)}}</small>}</td><td class="table-actions"><button (click)="finance.editTransaction(item)">Düzenle</button><button (click)="finance.requestTransactionDelete(item)">Sil</button></td></tr>
+      <tr><td class="selection-cell"><input type="checkbox" [checked]="isSelected(item.id)" (change)="toggleRow(item.id, $any($event.target).checked)" [attr.aria-label]="item.description + ' işlemini seç'"></td><td><strong>{{item.description}}</strong><small>{{item.entry_kind==='refund'?'İade':item.type==='Income'?'Gelir':'Gider'}}</small></td><td><span class="table-category"><i [style.background]="item.category_color"></i>{{item.category}}</span></td><td>{{format.formatDate(item.transaction_date)}}</td><td [class.income-text]="item.type==='Income'||item.entry_kind==='refund'"><strong>{{item.type==='Income'||item.entry_kind==='refund'?'+':'−'}}{{format.formatCurrency(item.original_amount,item.currency_code)}}</strong>@if(item.currency_code!=='TRY'){<small class="try-equivalent">≈ {{format.formatAmount(item.amount)}} · 1 {{item.currency_code}} = {{format.formatRate(item.exchange_rate)}} ₺ · {{item.rate_source==='manual'?'elle kur':'TCMB'}} {{format.formatDate(item.rate_effective_date || item.transaction_date)}}</small>}</td><td class="table-actions"><button (click)="finance.editTransaction(item)">Düzenle</button><button (click)="finance.requestTransactionDelete(item)">Sil</button></td></tr>
     } @empty {
-      <tr><td colspan="5" class="empty-copy">Bu filtrede işlem bulunamadı.</td></tr>
+      <tr><td colspan="6" class="empty-copy">Bu filtrede işlem bulunamadı.</td></tr>
     }
   </tbody></table></div>
 </section>
+@if (bulkDeletePrompt) {
+  <div class="bulk-delete-backdrop" role="presentation" (click)="$event.target === $event.currentTarget && cancelBulkDelete()">
+    <section class="bulk-delete-dialog panel" role="alertdialog" aria-modal="true" aria-labelledby="bulk-delete-title">
+      <span class="eyebrow">TOPLU İŞLEM</span><h2 id="bulk-delete-title">{{selectedVisibleTransactions.length}} işlem silinsin mi?</h2>
+      <p>Seçilen kayıtlar kalıcı olarak silinecek. Bu işlem geri alınamaz.</p>
+      @if (bulkDeleteError) { <p class="bulk-delete-error" role="alert">{{bulkDeleteError}}</p> }
+      <div class="selection-actions"><button class="outline-button" type="button" [disabled]="bulkDeleting" (click)="cancelBulkDelete()">Vazgeç</button><button class="delete-selected" type="button" [disabled]="bulkDeleting" (click)="confirmBulkDelete()">{{bulkDeleting ? 'Siliniyor…' : 'Seçilenleri sil'}}</button></div>
+    </section>
+  </div>
+}

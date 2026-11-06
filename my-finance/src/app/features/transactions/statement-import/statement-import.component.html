@@ -1,0 +1,139 @@
+<div class="import-backdrop" role="presentation" (click)="$event.target === $event.currentTarget && dismiss()">
+  <section class="import-dialog panel" role="dialog" aria-modal="true" aria-labelledby="statement-title">
+    <header class="import-heading">
+      <div><span class="eyebrow">DOSYADAN İÇE AKTAR</span><h2 id="statement-title">Banka ekstresi</h2><p>Dosya tarayıcıda okunur. Banka girişi veya hesap bağlantısı kullanılmaz.</p></div>
+      <button class="close-button" type="button" aria-label="Pencereyi kapat" (click)="dismiss()">×</button>
+    </header>
+
+    @if (!statement) {
+      <div class="file-drop" [class.busy]="loading" [class.drag-over]="dragActive" (dragenter)="dragEnter($event)" (dragover)="dragOver($event)" (dragleave)="dragLeave($event)" (drop)="fileDropped($event)">
+        <span class="file-mark" aria-hidden="true">↥</span>
+        <strong>{{ loading ? loadingStep : dragActive ? 'Dosyayı buraya bırak' : 'Ekstreni içe aktar' }}</strong>
+        <p>CSV, XLS, XLSX veya metin tabanlı PDF · en fazla 10 MB ve 1000 işlem</p>
+        <input #fileInput id="statement-file" class="file-select-input" type="file" accept=".csv,.xls,.xlsx,.pdf,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" [disabled]="loading" (change)="fileChanged($event)" aria-label="Banka ekstresi dosyası seç">
+        <span class="drop-hint">veya dosyanı buraya sürükleyip bırak</span>
+      </div>
+      <ul class="privacy-notes">
+        <li>Dosyanın kendisi sunucuya yüklenmez.</li>
+        <li>Hesap ve kart numarası biçimindeki değerler açıklamalardan temizlenir.</li>
+        <li>Metin katmanı olmayan veya tanınmayan PDF düzenleri içe aktarılmaz.</li>
+      </ul>
+    } @else {
+      <div class="file-summary">
+        <div><strong>{{ statement.fileName }}</strong><small>{{ statement.format }} · {{ statement.rows.length }} satır · {{ selectedRows.length }} içe alınmaya hazır</small></div>
+        <button class="outline-button" type="button" [disabled]="saving" (click)="statement = null; result = null; error = ''">Başka dosya seç</button>
+      </div>
+      @if (reviewRows.length) {
+        <section class="review-list" aria-label="Düzeltilmesi gereken satırlar">
+          <strong>{{ reviewRows.length }} satır kontrol bekliyor</strong>
+          <p>Her satırın neden beklediğini görmek ve doğrudan o satıra gitmek için seç.</p>
+          <ul>
+            @for (row of reviewRows; track row.sourceRow) {
+              <li><button type="button" (click)="goToReviewRow(row)">Satır {{ row.sourceRow }} · {{ row.description || 'Açıklama yok' }}</button><span>{{ reviewReason(row) }}</span></li>
+            }
+          </ul>
+        </section>
+      }
+      @for (warning of statement.warnings; track warning) { <p class="import-warning" role="status">{{ warning }}</p> }
+      @if (rateWarning) { <p class="import-warning" role="status">{{ rateWarning }}</p> }
+      @if (duplicateWarning) { <p class="import-warning" role="status">{{ duplicateWarning }}</p> }
+      @if (loading) { <p class="import-warning" role="status">{{ loadingStep }}</p> }
+      @if (notice) { <p class="import-success" role="status">{{ notice }}</p> }
+      @if (reviewRows.length && validRows.length) {
+        <p class="import-warning" role="status">{{ reviewRows.length }} satır belirsiz veya eksik olduğu için aktarılmayacak. Bunları tek tek düzeltmen gerekmiyor; geçerli satırları şimdi kaydedebilirsin.</p>
+      }
+
+      <div class="preview-counts" aria-label="Önizleme sayımları">
+        <span><strong>{{ validRows.length }}</strong> geçerli</span>
+        <span><strong>{{ statement.rows.filter(row => row.duplicateKind === 'exact').length }}</strong> aynı kayıt</span>
+        <span><strong>{{ statement.rows.filter(row => row.duplicateKind === 'possible').length }}</strong> olası mükerrer</span>
+        <span><strong>{{ statement.rows.filter(row => row.excluded).length }}</strong> transfer/kart ödemesi</span>
+      </div>
+      <section class="bulk-classification" aria-label="İşlem türü ve kategori toplu seçimi">
+        <div>
+          <strong>Tür ve kategoriyi topluca uygula</strong>
+          <p>Eksi tutar gider, artı tutar gelir sayılır. Ekstredeki borç/alacak bilgisi varsa o kullanılır. İstersen türü ve kategoriyi topluca değiştir.</p>
+        </div>
+        <label>İşlem türü
+          <select [ngModel]="bulkType" (ngModelChange)="setBulkType($event)" aria-label="Toplu işlem türü">
+            <option value="Expense">Gider</option><option value="Income">Gelir</option>
+          </select>
+        </label>
+        <label>Kategori
+          <select [(ngModel)]="bulkCategoryId" aria-label="Toplu işlem kategorisi">
+            <option [ngValue]="null">Kategori seç</option>
+            @for (category of bulkCategories; track category.id) { <option [ngValue]="category.id">{{ category.name }}</option> }
+          </select>
+        </label>
+        <button class="outline-button" type="button" [disabled]="!bulkCategoryId || saving" (click)="applyBulkClassification()">Dahil edilen satırlara uygula</button>
+      </section>
+      <p class="rules-note">Transfer ve kredi kartı borç ödemeleri harcama toplamına eklenmez. İadeler, bağlı kategorinin net giderini azaltır. Benzer kayıtlar otomatik silinmez; karar senin.</p>
+
+      <div class="preview-scroll">
+        <table class="preview-table">
+          <thead><tr><th>İŞLEM</th><th>TUTAR VE KUR</th><th>TÜR / KAYIT</th><th>KATEGORİ</th><th>DURUM</th></tr></thead>
+          <tbody>
+            @for (row of statement.rows; track row.sourceRow) {
+              <tr [attr.id]="'statement-row-' + row.sourceRow" [class.row-excluded]="row.excluded" [class.row-invalid]="!row.excluded && !isValid(row)">
+                <td class="detail-cell">
+                  <label class="mini-label" [for]="'statement-date-' + row.sourceRow">Tarih</label>
+                  <input class="date-input" type="date" [id]="'statement-date-' + row.sourceRow" [(ngModel)]="row.transaction_date" (ngModelChange)="changeDate(row)" aria-label="İşlem tarihi">
+                  <label class="mini-label" [for]="'statement-desc-' + row.sourceRow">Açıklama / işyeri</label>
+                  <input class="description-input" type="text" [id]="'statement-desc-' + row.sourceRow" [(ngModel)]="row.description" maxlength="140" aria-label="İşlem açıklaması">
+                  <small>Satır {{ row.sourceRow }} · {{ row.confidence === 'high' ? 'Yüksek eşleşme' : row.confidence === 'medium' ? 'Kontrol et' : 'Onay gerekli' }}</small>
+                </td>
+                <td class="amount-cell">
+                  <div class="amount-row">
+                    <select [(ngModel)]="row.currency_code" (ngModelChange)="changeCurrency(row)" aria-label="Para birimi">
+                      @for (currency of currencies; track currency) { <option [value]="currency">{{ currency }}</option> }
+                    </select>
+                    <input type="text" inputmode="decimal" [(ngModel)]="row.amountText" (ngModelChange)="editAmount(row)" aria-label="İşlem tutarı" placeholder="Tutar">
+                  </div>
+                  <strong class="saved-amount">Kaydedilecek TL tutarı: {{ format.formatAmount(row.amount) }}</strong>
+                  @if (row.currency_code !== 'TRY') {
+                    <label class="rate-label">1 {{ row.currency_code }} = ₺
+                      <input type="number" min="0.00000001" step="0.00000001" [(ngModel)]="row.exchange_rate" (ngModelChange)="applyManualRate(row)" aria-label="Uygulanacak döviz kuru">
+                    </label>
+                    <small>≈ {{ format.formatAmount(row.amount) }} · {{ row.rate_source === 'TCMB' ? 'TCMB efektif alış' : 'elle kur' }} {{ row.rate_effective_date || '' }}</small>
+                  }
+                </td>
+                <td class="kind-cell">
+                  <select [(ngModel)]="row.type" (ngModelChange)="changeType(row)" aria-label="Gelir veya gider">
+                    <option value="Expense">Gider</option><option value="Income">Gelir</option>
+                  </select>
+                  <select [(ngModel)]="row.entry_kind" (ngModelChange)="changeKind(row)" aria-label="İşlem niteliği">
+                    <option value="standard">Normal işlem</option><option value="refund">İade</option><option value="transfer">Hesaplar arası transfer</option><option value="card_payment">Kart borcu ödemesi</option>
+                  </select>
+                </td>
+                <td class="category-cell">
+                  <select [ngModel]="row.category_id" (ngModelChange)="changeCategory(row, $event)" [attr.aria-label]="row.description + ' kategorisi'">
+                    <option [ngValue]="null">Kategori seç</option>
+                    @for (category of categories; track category.id) { @if (category.type === row.type) { <option [ngValue]="category.id">{{ category.name }}</option> } }
+                  </select>
+                  @if (row.merchant_name) { <label class="learn-rule"><input type="checkbox" [(ngModel)]="row.learnMerchant"> Sonraki benzer işlemde hatırla</label> }
+                </td>
+                <td class="status-cell">
+                  @if (row.duplicateKind === 'exact') { <span class="status-tag duplicate">Aynısı kayıtlı</span><small>{{ row.duplicateDescription }}</small> }
+                  @else if (row.duplicateKind === 'possible') { <span class="status-tag possible">Benzer kayıt var</span><small>{{ row.duplicateDescription }}</small><label class="confirm-duplicate"><input type="checkbox" [(ngModel)]="row.confirmPotentialDuplicate"> Yine de ekle</label> }
+                  @else if (row.excluded) { <span class="status-tag excluded">Dışarıda</span><button type="button" class="include-button" (click)="toggleIncluded(row)">Dahil et</button> }
+                  @else if (!isValid(row)) { <span class="status-tag invalid">Düzeltme gerekli</span><small>{{ row.error || 'Alanları kontrol et.' }}</small>@if (row.needsReview) { <button type="button" class="include-button" (click)="confirmRow(row)">Satırı kontrol ettim</button> } }
+                  @else { <span class="status-tag ready">Hazır</span> }
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      @if (error) { <p class="import-error" role="alert">{{ error }}</p> }
+      @if (result) { <div class="result-details" role="status"><strong>İçe aktarma tamamlandı</strong><span>{{ result.imported }} eklendi</span><span>{{ result.duplicates }} mükerrer</span><span>{{ result.skipped }} atlandı</span><span>{{ result.invalid }} hatalı</span></div> }
+      <footer class="import-actions">
+        <span>{{ selectedRows.length }} işlem eklenecek · {{ skippedRows }} atlanacak</span>
+        <button class="outline-button" type="button" (click)="dismiss()">Kapat</button>
+        <button class="quick-add" type="button" [disabled]="!canImport()" (click)="importRows()">{{ saving ? 'Kaydediliyor…' : 'Seçili işlemleri ekle' }}</button>
+      </footer>
+    }
+
+    @if (error && !statement) { <p class="import-error" role="alert">{{ error }}</p> }
+    @if (!statement && !error && !loading) { <button class="text-close" type="button" (click)="dismiss()">Vazgeç</button> }
+  </section>
+</div>

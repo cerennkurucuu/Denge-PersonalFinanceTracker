@@ -33,6 +33,14 @@ test.beforeEach(async ({ page, context }) => {
     const rates = { EUR: 49.25, USD: 42.25, GBP: 56.5 };
     return route.fulfill({ json: { currency, rate: rates[currency] || 42.25, unit: 1, effectiveDate: previousBusinessDate(query.get('date') || `${year}-11-02`), source: 'TCMB', basis: 'Efektif alış' } });
   });
+  await page.route('**/api/exchange-rates/batch', route => {
+    const { items = [] } = route.request().postDataJSON();
+    const rates = { EUR: 49.25, USD: 42.25, GBP: 56.5 };
+    const quotes = Object.fromEntries(items.map(({ currency, date }) => [`${currency}|${date}`, {
+      quote: { currency, rate: rates[currency] || 42.25, unit: 1, effectiveDate: previousBusinessDate(date), source: 'TCMB', basis: 'Efektif alış' },
+    }]));
+    return route.fulfill({ json: { quotes } });
+  });
   await context.addCookies([{
     name: 'denge_session',
     value: sessionToken,
@@ -213,6 +221,48 @@ test('foreign-currency transactions use the official rate and allow a recorded m
   await expect(row).toBeVisible();
   await expect(row).toContainText('elle kur');
   await expect(row).toContainText('40,5');
+});
+
+test('statement import reads a selected file, classifies signed amounts, saves, and refreshes the list', async ({ page }) => {
+  await page.locator('.sidebar nav button').filter({ hasText: 'İşlemler' }).click();
+  await page.getByRole('button', { name: 'Ekstre aktar' }).click();
+
+  await page.getByLabel('Banka ekstresi dosyası seç').setInputFiles({
+    name: 'ornek-hareket.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('Tarih;Açıklama;Tutar;Para Birimi\n05.11.2026;HARCIRAH ÖDEMESİ;4.200,00;TRY\n', 'utf8'),
+  });
+
+  await expect(page.locator('.file-summary')).toContainText('1 içe alınmaya hazır');
+  await expect(page.locator('.preview-table tbody tr').first().locator('select[aria-label="Gelir veya gider"]')).toHaveValue('Income');
+  await expect(page.locator('.preview-table tbody tr').first()).toContainText('Hazır');
+  await page.getByRole('button', { name: 'Seçili işlemleri ekle' }).click();
+
+  await expect(page.getByText(/Ekstre işlendi: 1 eklendi/)).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Banka ekstresi' })).toHaveCount(0);
+  await expect(page.locator('tbody tr').filter({ hasText: 'HARCIRAH ÖDEMESİ' })).toContainText('Gelir');
+});
+
+test('multiple transactions can be selected and deleted together', async ({ page }) => {
+  for (const description of ['E2E toplu sil 1', 'E2E toplu sil 2']) {
+    await page.locator('.top-actions .quick-add').click();
+    await page.getByLabel('Tutar').fill('3.25');
+    await page.getByRole('textbox', { name: 'Açıklama', exact: true }).fill(description);
+    await page.getByRole('button', { name: 'İşlemi kaydet' }).click();
+    await expect(page.getByText('İşlem eklendi.')).toBeVisible();
+  }
+
+  await page.locator('.sidebar nav button').filter({ hasText: 'İşlemler' }).click();
+  for (const description of ['E2E toplu sil 1', 'E2E toplu sil 2']) {
+    await page.locator('tbody tr').filter({ hasText: description }).getByRole('checkbox').check();
+  }
+  await expect(page.getByText('2 işlem seçildi')).toBeVisible();
+  await page.getByRole('button', { name: 'Seçilenleri sil' }).click();
+  const confirmation = page.getByRole('alertdialog');
+  await expect(confirmation).toContainText('2 işlem silinsin mi?');
+  await confirmation.getByRole('button', { name: 'Seçilenleri sil' }).click();
+  await expect(page.getByText('2 işlem silindi.')).toBeVisible();
+  await expect(page.locator('tbody tr').filter({ hasText: 'E2E toplu sil' })).toHaveCount(0);
 });
 
 test('mobile layout stays within the viewport and exposes transaction filters', async ({ page }) => {

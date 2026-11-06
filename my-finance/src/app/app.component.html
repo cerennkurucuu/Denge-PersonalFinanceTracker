@@ -2,7 +2,7 @@
 <div class="app-shell"><app-sidebar [active]="active" [user]="user" (pageChange)="setPage($event)"/><main class="main-area"><app-topbar [active]="active" [dark]="finance.dark" (themeToggle)="toggleTheme()" (newTransaction)="finance.openNewTransaction()" (signOut)="signOut()"/><div class="page-content">
 @if(finance.error){<div class="alert error-alert" role="alert">{{finance.error}}<button (click)="finance.dismissError()">×</button></div>}
 @if(finance.notice){<div class="alert success-alert" role="status">{{finance.notice}}<button (click)="finance.dismissNotice()">×</button></div>}
-@switch(active){@case('dashboard'){<app-dashboard-page [user]="user" (pageChange)="setPage($event)"/>}@case('transactions'){<app-transactions-page/>}@case('reports'){<app-reports-page/>}@case('categories'){<app-categories-page/>}}
+@switch(active){@case('dashboard'){<app-dashboard-page [user]="user" (pageChange)="setPage($event)"/>}@case('transactions'){<app-transactions-page/>}@case('reports'){@defer (when active === 'reports') { <app-reports-page/> } @placeholder { <section class="panel loading-panel" role="status">Raporlar açılıyor…</section> }}@case('categories'){<app-categories-page/>}}
 </div><footer class="footer"><span>© {{formatYear}} Denge</span><span>Paranla aran dengede.</span></footer></main></div>
 <app-transaction-form/><app-category-form/><app-delete-confirmation/>
 }

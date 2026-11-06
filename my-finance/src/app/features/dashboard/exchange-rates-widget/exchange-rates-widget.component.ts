@@ -1,8 +1,8 @@
 import { CommonModule } from '@angular/common';
 import { ChangeDetectionStrategy, ChangeDetectorRef, Component, OnDestroy, OnInit, inject } from '@angular/core';
-import { catchError, forkJoin, of } from 'rxjs';
+import { catchError, of } from 'rxjs';
 import { ExchangeRate } from '../../../core/models/finance.models';
-import { FinanceApiService } from '../../../core/services/finance-api.service';
+import { ExchangeRatesBatchResult, FinanceApiService } from '../../../core/services/finance-api.service';
 import { FinanceFormatService } from '../../../core/services/finance-format.service';
 
 interface RateRow {
@@ -48,8 +48,10 @@ export class ExchangeRatesWidgetComponent implements OnInit, OnDestroy {
     const nextDay = new Date();
     nextDay.setDate(nextDay.getDate() + 1);
     const date = this.format.localDate(nextDay);
-    forkJoin(this.rows.map(row => this.api.getExchangeRate(row.currency, date).pipe(catchError(() => of(null))))).subscribe(quotes => {
-      quotes.forEach((quote, index) => this.rows[index].quote = quote);
+    this.api.getExchangeRatesBatch(this.rows.map(row => ({ currency: row.currency, date })))
+      .pipe(catchError(() => of({ quotes: {} } as ExchangeRatesBatchResult)))
+      .subscribe(response => {
+      this.rows.forEach(row => row.quote = response.quotes[`${row.currency}|${date}`]?.quote ?? null);
       this.loading = false;
       this.changeDetector.markForCheck();
     });

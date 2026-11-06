@@ -74,9 +74,9 @@
       <ul class="transaction-list" aria-label="Son finansal işlemler">
         @for (item of finance.summary.recent; track item.id) {
           <li class="transaction-row">
-            <span class="category-icon" [style.color]="item.category_color" aria-hidden="true">{{ item.type === 'Income' ? '↙' : '↗' }}</span>
-            <div class="transaction-name"><strong>{{ item.description }}</strong><small>{{ item.category }} · {{ format.formatDate(item.transaction_date) }}</small></div>
-            <div class="transaction-money"><strong class="transaction-amount" [class.income-text]="item.type === 'Income'">{{ item.type === 'Income' ? '+' : '−' }}{{ format.formatCurrency(item.original_amount, item.currency_code) }}</strong>@if (item.currency_code !== 'TRY') { <small>≈ {{ format.formatAmount(item.amount) }}</small> }</div>
+            <span class="category-icon" [style.color]="item.category_color" aria-hidden="true">{{ item.type === 'Income' || item.entry_kind === 'refund' ? '↙' : '↗' }}</span>
+            <div class="transaction-name"><strong>{{ item.description }}</strong><small>{{ item.entry_kind === 'refund' ? 'İade · ' : '' }}{{ item.category }} · {{ format.formatDate(item.transaction_date) }}</small></div>
+            <div class="transaction-money"><strong class="transaction-amount" [class.income-text]="item.type === 'Income' || item.entry_kind === 'refund'">{{ item.type === 'Income' || item.entry_kind === 'refund' ? '+' : '−' }}{{ format.formatCurrency(item.original_amount, item.currency_code) }}</strong>@if (item.currency_code !== 'TRY') { <small>≈ {{ format.formatAmount(item.amount) }}</small> }</div>
             <button class="row-more" type="button" (click)="editTransaction(item)" [attr.aria-label]="item.description + ' işlemini düzenle'">···</button>
           </li>
         }

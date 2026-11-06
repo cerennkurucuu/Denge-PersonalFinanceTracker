@@ -11,10 +11,10 @@
       </select>
     </label>
     <label class="year-select" for="report-from">Başlangıç tarihi
-      <input id="report-from" type="date" [(ngModel)]="finance.reportFrom" aria-label="Rapor başlangıç tarihi">
+      <input id="report-from" type="date" [(ngModel)]="finance.reportFrom" (change)="dateRangeChanged()" aria-label="Rapor başlangıç tarihi">
     </label>
     <label class="year-select" for="report-to">Bitiş tarihi
-      <input id="report-to" type="date" [(ngModel)]="finance.reportTo" aria-label="Rapor bitiş tarihi">
+      <input id="report-to" type="date" [(ngModel)]="finance.reportTo" (change)="dateRangeChanged()" aria-label="Rapor bitiş tarihi">
     </label>
     <button class="outline-button report-export" type="button" [disabled]="!finance.reportDateRangeValid" (click)="finance.exportReportCsv()">↓ Raporu CSV indir</button>
   </div>
@@ -82,3 +82,138 @@
     }
   </section>
 </div>
+
+<section class="panel intelligence-panel" aria-labelledby="financial-review-title">
+  <header class="panel-heading intelligence-heading">
+    <div><span class="eyebrow">KAYITLARINA DAYALI</span><h2 id="financial-review-title">Finansal değerlendirme</h2><p>Gözlemler işlem geçmişine dayanır; tahminler kesin sonuç değildir.</p></div>
+    <label class="year-select analysis-category-filter" for="analysis-category">Kategori filtresi
+      <select id="analysis-category" [(ngModel)]="selectedAnalysisCategory" aria-label="Analiz kategorisi">
+        <option value="">Tüm kategoriler</option>
+        @for (category of analysis?.categories || []; track category.name) { <option [value]="category.name">{{ category.name }}</option> }
+      </select>
+    </label>
+  </header>
+
+  <nav class="analysis-tabs" aria-label="Finansal değerlendirme bölümleri">
+    <button type="button" [class.active]="analysisTab === 'overview'" (click)="analysisTab = 'overview'">Özet</button>
+    <button type="button" [class.active]="analysisTab === 'habits'" (click)="analysisTab = 'habits'">Harcama alışkanlıkları</button>
+    <button type="button" [class.active]="analysisTab === 'plan'" (click)="analysisTab = 'plan'">Kişisel plan</button>
+  </nav>
+
+  @if (analysisLoading) { <div class="analysis-empty" role="status">Finansal hareketler inceleniyor…</div> }
+  @else if (analysisError) { <div class="analysis-empty analysis-error" role="alert">{{ analysisError }}</div> }
+  @else if (analysis) {
+    @if (analysisTab === 'overview') {
+      <div class="insight-summary" aria-label="Finansal özet">
+        <article><span>Dönem geliri</span><strong>{{ format.formatAmount(analysis.summary.income) }}</strong><small>{{ format.formatDate(analysis.from) }} – {{ format.formatDate(analysis.to) }}</small></article>
+        <article><span>Dönem gideri</span><strong>{{ format.formatAmount(analysis.summary.expense) }}</strong><small>İadeler net giderden düşülür</small></article>
+        <article><span>Net durum</span><strong [class.negative-value]="analysis.summary.net < 0">{{ format.formatAmount(analysis.summary.net) }}</strong><small>Gelir eksi gider</small></article>
+        <article><span>Tasarruf oranı</span><strong>{{ percent(analysis.summary.savingsRate) }}</strong><small>Yalnızca gelir bulunan dönemlerde</small></article>
+      </div>
+      <div class="current-month-strip"><strong>Bu ay şimdiye kadar</strong><span>Gelir {{ format.formatAmount(analysis.currentMonth.income) }}</span><span>Gider {{ format.formatAmount(analysis.currentMonth.expense) }}</span><span>Net {{ format.formatAmount(analysis.currentMonth.net) }}</span>@if (priorMonth) { <small>Gider {{ format.monthChange(analysis.currentMonth.expense, priorMonth.expense) }} · önceki ay</small> }</div>
+      <div class="period-comparison" aria-label="Üç ve altı aylık değişim">
+        @for (period of analysis.habits.periodChanges; track period.months) {
+          <article><h3>Son {{ period.months }} tamamlanmış ay</h3><small>Önceki {{ period.months }} ayla karşılaştırma</small>
+            @if (period.sufficientHistory) { <p>Gelir <strong>{{ percent(period.incomeChangeRate) }}</strong> · Gider <strong>{{ percent(period.expenseChangeRate) }}</strong></p> }
+            @else { <p class="analysis-muted">Karşılaştırma için yeterli geçmiş yok.</p> }
+          </article>
+        }
+      </div>
+
+      <div class="intelligence-grid">
+        <section class="insight-block" aria-labelledby="trend-heading">
+          <div class="insight-block-heading"><div><h3 id="trend-heading">Aylık akış</h3><p>Son altı aylık tamamlanmış ve mevcut dönem</p></div><span>{{ analysis.monthlyTrend.length }} dönem</span></div>
+          @if (analysis.monthlyTrend.length) {
+            <div class="trend-list">
+              @for (month of analysis.monthlyTrend; track month.month) {
+                <div class="trend-row"><span>{{ month.month }}</span><div class="trend-bars"><i class="income-bar" [style.width.%]="trendWidth(month.income)" [attr.aria-label]="'Gelir ' + format.formatAmount(month.income)"></i><i class="expense-bar" [style.width.%]="trendWidth(month.expense)" [attr.aria-label]="'Gider ' + format.formatAmount(month.expense)"></i></div><small>{{ format.formatAmount(month.income - month.expense) }}</small></div>
+              }
+            </div>
+            <div class="trend-legend"><span><i class="income-bar"></i>Gelir</span><span><i class="expense-bar"></i>Net gider</span></div>
+          } @else { <p class="analysis-empty">Bu aralıkta aylık hareket bulunmuyor.</p> }
+        </section>
+
+        <section class="insight-block" aria-labelledby="category-insight-heading">
+          <div class="insight-block-heading"><div><h3 id="category-insight-heading">Kategori dağılımı</h3><p>{{ selectedAnalysisCategory || 'Seçili dönem' }}</p></div></div>
+          @if (analysisCategories.length) {
+            <ol class="insight-category-list">
+              @for (category of analysisCategories.slice(0, 8); track category.name) {
+                <li><div><span>{{ category.name }}</span><strong>{{ format.formatAmount(category.amount) }}</strong></div><span class="insight-progress"><i [style.width.%]="categoryShare(category.amount)"></i></span></li>
+              }
+            </ol>
+          } @else { <p class="analysis-empty">Seçili dönem veya kategoride harcama kaydı yok.</p> }
+          <div class="top-merchant-list"><h4>Sık işlem yapılan işyerleri</h4>
+            @for (merchant of analysis.topMerchants.slice(0, 5); track merchant.merchant) { <p><span>{{ merchant.merchant }} <small>{{ merchant.count }} işlem</small></span><strong>{{ format.formatAmount(merchant.amount) }}</strong></p> }
+            @if (!analysis.topMerchants.length) { <small>İşyeri bilgisi içeren hareket yok.</small> }
+          </div>
+        </section>
+      </div>
+      <p class="analysis-footnote">{{ analysis.habits.hasEnoughHistory ? 'Alışkanlık incelemesi için ' + analysis.habits.historyDays + ' günlük kayıt mevcut.' : 'Alışkanlık değerlendirmesi için henüz yeterli geçmiş yok; erken dönemde kesin gözlem gösterilmiyor.' }}</p>
+    }
+
+    @if (analysisTab === 'habits') {
+      <div class="habit-window-grid">
+        @for (days of [30, 60, 90]; track days) {
+          <article class="habit-window"><span>Son {{ days }} gün</span><strong>{{ format.formatAmount(analysis.habits.windowTotals[days].expense) }}</strong><small>Gelir {{ format.formatAmount(analysis.habits.windowTotals[days].income) }}</small></article>
+        }
+      </div>
+      @if (!analysis.habits.hasEnoughHistory) { <p class="analysis-empty" role="status">{{ analysis.habits.historyDays }} günlük kayıt var. Karşılaştırmalı alışkanlık tespiti için 90 güne yaklaşan geçmiş gerekir.</p> }
+      <div class="intelligence-grid habit-grid">
+        <section class="insight-block"><div class="insight-block-heading"><div><h3>Tekrarlayan işyerleri</h3><p>Son 30 gün · önceki 30 gün ile karşılaştırma</p></div></div>
+          @if (analysis.habits.repeatedMerchants.length) { @for (merchant of analysis.habits.repeatedMerchants; track merchant.merchant) { <p class="habit-line"><span><strong>{{ merchant.merchant }}</strong><small>{{ merchant.previous30DayCount }} → {{ merchant.count }} işlem</small></span><strong>{{ format.formatAmount(merchant.amount) }}</strong></p> } }
+          @else { <p class="analysis-empty">Bu dönemde belirgin tekrarlanan işyeri bulunmadı.</p> }
+        </section>
+        <section class="insight-block"><div class="insight-block-heading"><div><h3>Kategori değişimleri</h3><p>Önceki 90 günün aylık ortalamasına göre</p></div></div>
+          @if (analysis.habits.categoryChanges.length) { @for (item of analysis.habits.categoryChanges; track item.category) { <p class="habit-line"><span><strong>{{ item.category }}</strong><small>{{ format.formatAmount(item.prior90DayMonthlyAverage) }} ortalama</small></span><strong class="change-up">+{{ percent(item.changeRate) }}</strong></p> } }
+          @else { <p class="analysis-empty">%30 üzeri artış görünen kategori yok.</p> }
+          <p class="analysis-footnote">Artış, tek başına gereksiz harcama anlamına gelmez.</p>
+        </section>
+        <section class="insight-block"><div class="insight-block-heading"><div><h3>Hafta içi ve hafta sonu</h3><p>Son 30 günlük gider toplamı</p></div></div><p class="habit-line"><span>Hafta içi</span><strong>{{ format.formatAmount(analysis.habits.weekendVsWeekday.weekday) }}</strong></p><p class="habit-line"><span>Hafta sonu</span><strong>{{ format.formatAmount(analysis.habits.weekendVsWeekday.weekend) }}</strong></p></section>
+        <section class="insight-block"><div class="insight-block-heading"><div><h3>Düzenli ödemeler</h3><p>Yalnızca benzer tutar ve aralık göstergesi</p></div></div>
+          @if (analysis.habits.possibleSubscriptions.length) { @for (item of analysis.habits.possibleSubscriptions; track item.merchant) { <p class="habit-line"><span><strong>{{ item.merchant }}</strong><small>{{ item.note }}</small></span><strong>{{ format.formatAmount(item.amount) }}</strong> } }
+          @else { <p class="analysis-empty">Düzenli ödeme örüntüsü tespit edilmedi.</p> }
+        </section>
+      </div>
+      <section class="recommendation-section" aria-labelledby="recommendations-heading"><div class="insight-block-heading"><div><h3 id="recommendations-heading">Kişisel gözlemler</h3><p>Gerekçe ve olası etki işlem geçmişinden hesaplanır.</p></div></div>
+        @if (analysis.recommendations.length) { @for (item of analysis.recommendations; track item.fingerprint) { <article class="recommendation-row"><div><p>{{ item.explanation }}</p><small>{{ item.impactBasis }} @if (item.expectedImpact !== null) { Olası fark: {{ format.formatAmount(item.expectedImpact) }}. } · Güven: {{ item.confidence === 'medium' ? 'orta' : 'yüksek' }}</small></div><div class="recommendation-actions">@if (item.feedback === 'accepted') { <span class="accepted-tag">Takipte</span> } @else { <button type="button" (click)="recommendationFeedback(item.fingerprint, 'accepted')">İzle</button><button type="button" (click)="recommendationFeedback(item.fingerprint, 'rejected')">Kapat</button> }</div></article> } }
+        @else { <p class="analysis-empty">Bu tarih aralığında kişisel öneri oluşturacak belirgin bir örüntü yok.</p> }
+      </section>
+      @if (analysis.payrollAfterSpend) { <p class="analysis-footnote">Maaş sonrası ilk 7 gün için {{ analysis.payrollAfterSpend.observations }} dönem gözlendi. Ortanca gider: {{ format.formatAmount(analysis.payrollAfterSpend.medianSevenDayExpense) }}. Bu ilişki tek başına davranış nedeni göstermez.</p> }
+    }
+
+    @if (analysisTab === 'plan') {
+      <div class="plan-builder">
+        <div class="plan-intro"><h3>Gerçek azaltma kapasitesine göre planla</h3><p>Korunacak tutar ve oranı her kategori için sen belirlersin. Kira, temel giderler ve sağlık harcamaları otomatik kısılabilir sayılmaz.</p></div>
+        <div class="plan-target-row"><label for="plan-savings-target">Aylık birikim hedefi (₺)<input id="plan-savings-target" type="text" inputmode="decimal" [(ngModel)]="planTargetInput" placeholder="0,00"></label><button class="outline-button" type="button" [disabled]="planLoading" (click)="calculateScenarios()">{{ planLoading ? 'Hesaplanıyor…' : 'Senaryoları hesapla' }}</button></div>
+
+        @if (preferences.length) {
+          <div class="plan-preferences"><div class="insight-block-heading"><div><h4>Kategori koruma sınırları</h4><p>Üç tamamlanmış ayın ortancası · tutarlar kuruş hassasiyetinde tutulur</p></div><button class="outline-button" type="button" [disabled]="savingPreferences" (click)="savePreferences()">{{ savingPreferences ? 'Kaydediliyor…' : 'Tercihleri kaydet' }}</button></div>
+            <div class="preference-table"><div class="preference-header"><span>KATEGORİ</span><span>ORTALAMA</span><span>KORUNACAK</span><span>AZALTMA ORANI</span></div>
+              @for (item of preferences; track item.categoryId) { <div class="preference-row"><strong>{{ item.name }}</strong><span>{{ format.formatAmount(item.monthlyAverage) }}</span><label><span class="sr-only">{{ item.name }} korunacak tutar</span><input type="text" inputmode="decimal" [(ngModel)]="item.protectedInput" [attr.aria-label]="item.name + ' için korunacak tutar'" [placeholder]="format.formatMinorUnits(item.monthlyAverage, 'TRY')"></label><label class="rate-input"><span class="sr-only">{{ item.name }} azaltma oranı yüzde</span><input type="number" min="0" max="80" step="5" [(ngModel)]="item.reductionInput" [attr.aria-label]="item.name + ' azaltma oranı'"> %</label></div> }
+            </div>
+          </div>
+        } @else { <p class="analysis-empty">Üç tamamlanmış aylık gider geçmişi oluştuğunda kategori azaltma kapasiteleri hesaplanır.</p> }
+
+        @if (scenarioPreview; as preview) {
+          <div class="plan-calculation"><p>Aylık ortanca gelir <strong>{{ format.formatAmount(preview.inputs.monthlyIncome) }}</strong> · gider <strong>{{ format.formatAmount(preview.inputs.monthlyExpense) }}</strong></p><p>Mevcut net durum <strong [class.negative-value]="preview.inputs.currentNet < 0">{{ format.formatAmount(preview.inputs.currentNet) }}</strong> · hedef için gerekli iyileştirme <strong>{{ format.formatAmount(preview.inputs.requiredImprovement) }}</strong></p><p>Seçilen kategori sınırlarına göre ulaşılabilir azaltma kapasitesi <strong>{{ format.formatAmount(preview.inputs.totalReductionCapacity) }}</strong></p></div>
+          <div class="scenario-grid">
+            @for (scenario of preview.scenarios; track scenario.id) { <button type="button" class="scenario-card" [class.selected]="selectedScenarioId === scenario.id" (click)="selectedScenarioId = scenario.id"><span>{{ scenario.label }} plan</span><strong>{{ format.formatAmount(scenario.attainableImprovement) }}</strong><small>İstenen iyileştirme {{ format.formatAmount(scenario.requestedImprovement) }}</small><small>Plan sonrası net {{ format.formatAmount(scenario.netAfterPlan) }}</small><small [class.negative-value]="!scenario.attainable">{{ scenario.attainable ? 'Kategori kapasitesi içinde' : 'Bu tutarın tamamı mevcut kategorilerden azaltılamaz' }}</small></button> }
+          </div>
+          @if (selectedScenario; as scenario) { <div class="plan-preview"><strong>{{ scenario.label }} senaryosu</strong><p>Bu senaryoda gider {{ format.formatAmount(scenario.plannedExpense) }} olur; net durum {{ format.formatAmount(scenario.netAfterPlan) }} olarak hesaplanır.</p><p>@for (target of scenario.categoryTargets; track target.categoryId) { <span>{{ target.category }}: {{ format.formatAmount(target.monthlyLimit) }} hedef · {{ format.formatAmount(target.monthlyReduction) }} azaltma&nbsp; </span> }</p><button class="quick-add" type="button" (click)="createPlan()">Bu planı izle</button></div> }
+        }
+
+        @if (planError) { <p class="analysis-error" role="alert">{{ planError }}</p> }
+        @if (planNotice) { <p class="analysis-notice" role="status">{{ planNotice }}</p> }
+
+        @if (activePlan; as plan) {
+          <section class="active-plan" aria-labelledby="active-plan-heading"><div class="insight-block-heading"><div><h3 id="active-plan-heading">{{ plan.name }}</h3><p>{{ format.formatDate(plan.start_date) }} – {{ format.formatDate(plan.end_date) }} · hedef birikim {{ format.formatAmount(plan.target_savings) }}</p></div><div class="plan-status-actions"><button class="outline-button" type="button" (click)="updatePlanStatus('completed')">Tamamlandı</button><button class="outline-button" type="button" (click)="updatePlanStatus('archived')">Arşivle</button></div></div>
+            <p class="analysis-footnote">@if (plan.input_snapshot.feasible) { Bu hedef üç aylık geçmiş ve senin belirlediğin kategori sınırlarıyla hesaplandı. } @else { Mevcut azaltma kapasitesi hedef iyileştirmeyi karşılamıyor; açık ve hedef arasındaki fark görünür tutuluyor. }</p>
+            @for (target of plan.category_targets; track target.categoryId) { <div class="active-target"><div><strong>{{ target.category }}</strong><span>{{ format.formatAmount(target.spent) }} harcandı · {{ format.formatAmount(target.remaining) }} kalan</span></div><span class="insight-progress"><i [class.over-budget]="target.exceeded" [style.width.%]="target.progressPercent"></i></span><small>Haftalık kalan bütçe {{ format.formatAmount(target.weeklyBudget) }}{{ target.exceeded ? ' · hedef aşıldı' : '' }}</small></div> }
+          </section>
+        } @else { <p class="analysis-empty">Şu anda takip edilen etkin bir plan yok.</p> }
+        @if (analysis.habits.forecast; as forecast) { <section class="forecast-line"><div><h4>Son üç tamamlanmış ayın referansı</h4><p>{{ forecast.explanation }}</p><small>Dayanak aylar: {{ forecast.basisMonths.join(', ') }} · düşük güven; ay sonu tahmini değildir</small></div><div><span>Ortanca gelir</span><strong>{{ format.formatAmount(forecast.income) }}</strong></div><div><span>Ortanca gider</span><strong>{{ format.formatAmount(forecast.expense) }}</strong></div><div><span>Ortanca net</span><strong [class.negative-value]="forecast.income < forecast.expense">{{ format.formatAmount(forecast.income - forecast.expense) }}</strong></div></section> }
+        @if (planHistory.length) { <details class="plan-history"><summary>Önceki planlar ({{ planHistory.length }})</summary>@for (past of planHistory; track past.id) { <p>{{ past.name }} · {{ format.formatDate(past.start_date) }} · hedef {{ format.formatAmount(past.target_savings) }} · {{ past.status }}</p> }</details> }
+      </div>
+    }
+  }
+</section>
