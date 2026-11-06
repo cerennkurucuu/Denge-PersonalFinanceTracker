@@ -15,6 +15,11 @@ Denge, Türkçe arayüzlü bir kişisel finans takip uygulamasıdır. Gelir ve g
 - Google hesabıyla giriş ve hesaplar arasında kullanıcıya özel veri ayrımı
 - TCMB efektif alış kuruyla dövizli işlem kaydı, elle kur düzeltme ve kur geçmişi
 - Dövizli işlemlerde orijinal tutar ile raporlarda kullanılan TL karşılığının birlikte gösterimi
+- CSV, XLS, XLSX ve metin tabanlı PDF ekstreleri için tarayıcıda önizleme, doğrulama ve seçmeli içe aktarma
+- Mükerrer kayıt kontrolü, transfer/kart borcu ödemelerini tüketim harcamasından ayırma ve iadeleri net giderden düşme
+- Kullanıcı kategorilerine bağlı merkezi işyeri eşleştirmeleri; düzeltilen sınıflandırmayı sonraki işlemler için hatırlama
+- Gerçek işlem geçmişinden finansal analiz, 30/60/90 günlük harcama örüntüleri ve açıklanabilir tasarruf planları
+- Kategori bazında korunacak tutar ve azaltma kapasitesi belirleme; plan ilerlemesini ve öneri tercihlerini takip etme
 
 ## Teknolojiler ve mimari
 
@@ -29,6 +34,8 @@ Denge, Türkçe arayüzlü bir kişisel finans takip uygulamasıdır. Gelir ve g
 - İstemci tarafı rendering kullanılır. Angular SSR kaldırılmıştır; sunucu uygulaması Express API ve production statik dosyalarını sunar.
 - Aylık gelir/gider ve kategori dağılımı grafikleri responsive Chart.js bileşenleriyle çizilir.
 - Kullanıcılar Google `sub` kimliğiyle tanımlanır. Her işlem, kategori ve ayar `user_id` ile sınırlandırılır; oturum kimlikleri veritabanında yalnızca SHA-256 özetiyle saklanır.
+- Ekstre dosyası istemcide ayrıştırılır; sunucuya dosyanın kendisi veya hesap/kart numaraları gönderilmez. Sunucuda yalnızca seçilen ve doğrulanan işlem kayıtları, dosyanın SHA-256 tekrarlama anahtarı ve hassas ad taşımayan içe aktarma geçmişi tutulur. Mükerrer adayları otomatik silinmez; onay kullanıcıya bırakılır.
+- Finansal analiz motoru deterministiktir ve kişisel veriyi harici bir yapay zekâ servisine göndermez. Yetersiz veya seyrek işlem geçmişinde alışkanlık önerisi ve dönem referansı üretmez. Kategori azaltma sınırları kullanıcıca düzenlenir; zorunlu giderler işyeri adına bakılarak otomatik azaltılabilir sayılmaz.
 
 ## Gereksinimler
 
@@ -72,17 +79,36 @@ TCMB efektif alış kurlarını iş günlerinde 15.30’da ilan eder; hafta sonu
 | GET | `/api/auth/me` | Oturum açmış kullanıcı (kimlik doğrulama gerekli) |
 | POST | `/api/auth/logout` | Oturumu kapat |
 | GET, POST | `/api/transactions` | İşlemleri listele veya ekle; `from`, `to`, `type` filtreleri kullanılabilir |
+| DELETE | `/api/transactions` | Seçilen kullanıcıya ait 1–500 işlemi atomik olarak sil (`{ "ids": [1, 2] }`) |
 | PUT, DELETE | `/api/transactions/:id` | İşlemi güncelle veya sil |
 | GET | `/api/transactions/:id/rate-history` | İşlemin kur kayıt geçmişi |
 | GET | `/api/exchange-rates/currencies` | TCMB efektif alış kuru bulunan para birimleri |
 | GET | `/api/exchange-rates?currency=USD&date=2026-06-15` | Tarih için son yayımlanmış TCMB efektif alış kuru |
+| POST | `/api/exchange-rates/batch` | En çok 300 para birimi/tarih çifti için kur sorgusu |
 | GET, POST | `/api/categories` | Kategorileri listele veya ekle |
 | PUT, DELETE | `/api/categories/:id` | Kullanıcı kategorisini düzenle veya sil |
 | PUT | `/api/categories/:id/preferred` | Bu kategori türü için varsayılan işlem kategorisini belirle |
 | GET | `/api/dashboard/summary` | Bakiye, dönem özeti ve son işlemler |
 | GET | `/api/reports/monthly?year=2026` | Aylık gelir/gider toplamları (kuruş) |
 | GET | `/api/reports/yearly` | Yıllık gelir/gider toplamları (kuruş) |
+| GET | `/api/reports/analysis?from=2026-01-01&to=2026-06-30` | Tarih aralığı için finansal özet, kategori ve alışkanlık analizi |
+| POST | `/api/reports/recommendations/:fingerprint/feedback` | Kişisel öneriyi izle veya kapat |
+| POST | `/api/statements/check` | Seçilen ekstre satırlarını kategori ve mükerrerlik için önizle |
+| POST | `/api/statements/import` | Kullanıcı onaylı, doğrulanmış işlemleri atomik içe aktar |
+| GET | `/api/statements` | Kullanıcıya ait içe aktarma geçmişi |
+| GET | `/api/merchant-rules` | Kullanıcının hatırlatılan işyeri kategori eşleştirmeleri |
+| DELETE | `/api/merchant-rules/:merchant` | Kullanıcıya ait işyeri eşleştirmesini kaldır |
+| GET, PUT | `/api/plans/preferences` | Kategori koruma ve azaltma tercihleri |
+| GET | `/api/plans/scenarios?targetSavings=300000` | Hedefi kuruş cinsinden alıp kişisel senaryoları hesapla |
+| POST | `/api/plans` | Seçilen finansal planı oluştur |
+| GET | `/api/plans/current` | Etkin plan, kalan kategori bütçesi ve ilerleme |
+| GET | `/api/plans/history` | Önceki planlar |
+| PATCH | `/api/plans/:id/status` | Kullanıcıya ait planı tamamla veya arşivle |
 | GET, PUT | `/api/settings` | Para birimi, tema ve dil ayarları |
+
+Ekstre aktarımında CSV, XLS ve XLSX dosyaları ile metin katmanı bulunan PDF dosyaları desteklenir; dosya boyutu en fazla 10 MB, işlem satırı en fazla 1000 ve PDF en fazla 100 sayfa olabilir. Taranmış/görüntü tabanlı PDF veya yeterli doğrulukta çözümlenemeyen banka düzeni reddedilir; önizlemede yönü/kategorisi belirsiz satır için kullanıcı onayı gerekir. Transfer ve kredi kartı borç ödemesi tüketim gideri olarak içe alınmaz; iadeler `entry_kind=refund` ile saklanıp giderlerden düşülür. Dosyalar yüklenmez veya arşivlenmez.
+
+Migration `004-import-and-planning.sql`, içe aktarma geçmişi, mükerrer anahtarları, kullanıcıya özel işyeri tercihleri, kategori plan tercihleri, plan arşivi, günlük ilerleme ve öneri geri bildirim tablolarını geriye uyumlu biçimde ekler. Eski işlemlere `standard` niteliği atanır; mevcut finans kayıtları silinmez.
 
 Finans endpoint’leri Google oturum cookie’si olmadan kullanılamaz. TRY işlem oluşturma örneği (`amount` ve `original_amount` kuruş cinsindedir):
 
@@ -150,6 +176,7 @@ my-finance/
       dashboard/dashboard-page/             Genel bakış ve özet grafikleri
       dashboard/exchange-rates-widget/      EUR, USD ve GBP için TCMB efektif alış kurları
       transactions/transactions-page/       İşlem listesi ve filtreleri
+      transactions/statement-import/        Tarayıcı içi ekstre ayrıştırma, önizleme ve içe aktarma
       transactions/transaction-form/         İşlem ekleme/düzenleme formu
       categories/categories-page/           Gelir/gider kategori listeleri
       categories/category-form/             Kategori ekleme/düzenleme formu
@@ -164,6 +191,8 @@ my-finance/
   server/
     index.cjs          Express API başlangıcı
     mysql-server.cjs   MySQL havuzu, migration ve REST endpoint'leri
+    finance-engine.cjs Açıklanabilir alışkanlık analizi ve tasarruf senaryoları
+    merchant-category-rules.cjs Merkezi, genişletilebilir işyeri eşleştirmeleri
     migrations/mysql/  Sürümlü MySQL şema migration'ları
     tests/             API, güvenlik, TCMB ve MySQL entegrasyon testleri
   scripts/             Geliştirme, E2E ve ekran görüntüsü yardımcıları
