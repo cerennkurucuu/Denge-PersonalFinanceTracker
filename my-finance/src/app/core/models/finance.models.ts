@@ -32,6 +32,8 @@ export interface Transaction {
   category: string;
   category_color: string;
   transaction_date: string;
+  entry_kind?: 'standard' | 'refund';
+  merchant_name?: string | null;
 }
 
 export interface DashboardCategory {
@@ -85,6 +87,83 @@ export interface ExchangeRate {
   effectiveDate: string;
   source: 'TCMB';
   basis: string;
+}
+
+export interface PlanCategoryPreference {
+  categoryId: number;
+  name: string;
+  monthlyAverage: number;
+  protectedAmount: number;
+  reductionRate: number;
+  configured: boolean;
+}
+
+export interface PlanScenario {
+  id: 'relaxed' | 'balanced' | 'aggressive';
+  label: string;
+  requestedImprovement: number;
+  attainableImprovement: number;
+  attainable: boolean;
+  plannedExpense: number;
+  netAfterPlan: number;
+  monthlySavings: number;
+  remainingDeficit: number;
+  categoryTargets: Array<{ category: string; categoryId?: number; monthlyLimit: number; monthlyReduction: number }>;
+}
+
+export interface ActiveFinancialPlan {
+  id: number;
+  name: string;
+  start_date: string;
+  end_date: string;
+  target_savings: number;
+  requested_improvement: number;
+  planned_improvement: number;
+  status: 'active' | 'completed' | 'archived';
+  input_snapshot: { monthlyIncome?: number; monthlyExpense?: number; feasible?: boolean; confidence?: 'low' | 'medium' };
+  category_targets: Array<{ categoryId: number; category: string; monthlyLimit: number; monthlyReduction: number; spent: number; remaining: number; weeklyBudget: number; exceeded: boolean; progressPercent: number }>;
+}
+
+export interface PlanScenarioPreview {
+  inputs: { monthlyIncome: number; monthlyExpense: number; targetSavings: number; currentNet: number; currentDeficit: number; requiredImprovement: number; totalReductionCapacity: number; feasible: boolean; confidence: 'low' | 'medium'; monthsUsed: number };
+  scenarios: PlanScenario[];
+}
+
+export interface FinancialAnalysis {
+  from: string;
+  to: string;
+  summary: { income: number; expense: number; net: number; savingsRate: number | null };
+  currentMonth: { income: number; expense: number; net: number; savingsRate: number | null };
+  previousMonth: string;
+  currentMonthKey: string;
+  monthlyTrend: Array<{ month: string; income: number; expense: number }>;
+  categories: Array<{ name: string; amount: number }>;
+  topMerchants: Array<{ merchant: string; count: number; amount: number }>;
+  fixedAndVariable: { repeatedMerchantExpense: number; otherExpense: number; explanation: string };
+  payrollAfterSpend: { observations: number; medianSevenDayExpense: number; confidence: 'low' | 'medium' } | null;
+  habits: {
+    historyDays: number; confidence: 'low' | 'medium'; hasEnoughHistory: boolean;
+    windowTotals: Record<number, { income: number; expense: number }>;
+    repeatedMerchants: Array<{ merchant: string; count: number; amount: number; previous30DayCount: number }>;
+    categoryChanges: Array<{ category: string; current30Days: number; prior90DayMonthlyAverage: number; changeRate: number }>;
+    weekendVsWeekday: { weekend: number; weekday: number; days: number };
+    possibleSubscriptions: Array<{ merchant: string; count: number; amount: number; note: string }>;
+    forecast: null | { income: number; expense: number; basisMonths: string[]; confidence: 'low'; explanation: string };
+    periodChanges: Array<{
+      months: 3 | 6;
+      currentIncome: number;
+      priorIncome: number;
+      currentExpense: number;
+      priorExpense: number;
+      incomeChangeRate: number | null;
+      expenseChangeRate: number | null;
+      sufficientHistory: boolean;
+      currentMonths: string[];
+      comparisonMonths: string[];
+    }>;
+  };
+  recommendations: Array<{ kind: string; fingerprint: string; explanation: string; expectedImpact: number | null; impactBasis: string; confidence: 'low' | 'medium'; feedback: 'accepted' | 'rejected' | 'dismissed' | null }>;
+  financialStatus: { recurringDeficitMonths: number; historyMonths: number };
 }
 
 export interface ExchangeRateLog {

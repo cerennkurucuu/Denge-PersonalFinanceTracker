@@ -5,6 +5,8 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { verifyGoogleIdToken } = require('./google-id-token.cjs');
 const { isTrustedOrigin, normalizeAppOrigin, parseTrustedProxyHops, validateProductionConfiguration } = require('./security-config.cjs');
+const { normalizeMerchant, guessCategory } = require('./merchant-category-rules.cjs');
+const { buildFinancialPlan, analyzeSpending } = require('./finance-engine.cjs');
 
 const production = process.env.NODE_ENV === 'production';
 const appOrigin = normalizeAppOrigin(process.env.APP_ORIGIN, { production });
@@ -18,10 +20,25 @@ app.use((_req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  if (production) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+  if (production) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+    res.setHeader('Content-Security-Policy', [
+      "default-src 'self'",
+      "base-uri 'self'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "form-action 'self'",
+      "script-src 'self' https://accounts.google.com/gsi/client",
+      "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self' https://accounts.google.com/gsi/",
+      "frame-src https://accounts.google.com/gsi/",
+    ].join('; '));
+  }
   next();
 });
-app.use(express.json({ limit: '32kb' }));
+app.use(express.json({ limit: '2mb' }));
 
 const mysqlOptions = {
   host: process.env.MYSQL_HOST,
@@ -30,7 +47,9 @@ const mysqlOptions = {
   password: process.env.MYSQL_PASSWORD,
   database: process.env.MYSQL_DATABASE,
   waitForConnections: true,
-  connectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT || 10),
+  // Use one pooled connection by default for personal apps on shared/test MySQL accounts.
+  // Higher limits can be configured explicitly when the database account allows them.
+  connectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT || 1),
   queueLimit: 0,
   charset: 'utf8mb4',
   dateStrings: true,
@@ -54,11 +73,12 @@ const defaults = [
 const categoryIcons = new Set(['circle', 'basket', 'car', 'bolt', 'heart', 'bag', 'sparkles', 'book', 'restaurant', 'home', 'briefcase', 'plus', 'laptop', 'chart', 'paw']);
 const googleClientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
 const sessionCookieName = 'denge_session';
-const sessionLifetimeSeconds = 7 * 24 * 60 * 60;
+// Keep the authenticated browser session across app/server restarts for 30 days.
+const sessionLifetimeSeconds = 30 * 24 * 60 * 60;
 const hashSession = token => crypto.createHash('sha256').update(token).digest('hex');
 const cookieOptions = { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: sessionLifetimeSeconds * 1000 };
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
-const transactionSelect = `SELECT t.id,t.type,t.amount,t.original_amount,t.currency_code,t.exchange_rate,t.tcmb_rate,t.rate_source,t.rate_effective_date,t.description,t.category_id,t.transaction_date,t.created_at,t.updated_at,c.name AS category,c.color AS category_color,c.icon AS category_icon FROM transactions t JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id`;
+const transactionSelect = `SELECT t.id,t.type,t.amount,t.original_amount,t.currency_code,t.exchange_rate,t.tcmb_rate,t.rate_source,t.rate_effective_date,t.entry_kind,t.merchant_name,t.description,t.category_id,t.transaction_date,t.created_at,t.updated_at,c.name AS category,c.color AS category_color,c.icon AS category_icon FROM transactions t JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id`;
 const fail = (res, status, message) => res.status(status).json({ error: message });
 const route = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
 function localToday() {
@@ -457,6 +477,24 @@ app.get('/api/exchange-rates', limitExchangeRateRequests, route(async (req, res)
   catch { return fail(res, 503, 'Bu tarih için TCMB efektif alış kuru alınamadı. Kuru elle girebilirsin.'); }
   return res.setHeader('Cache-Control', 'private, max-age=300').json(rate);
 }));
+app.post('/api/exchange-rates/batch', limitExchangeRateRequests, route(async (req, res) => {
+  const items = req.body?.items;
+  if (!Array.isArray(items) || items.length > 300) return fail(res, 400, 'Kur listesi geçersiz veya 300 satır sınırını aşıyor.');
+  const unique = new Map();
+  for (const item of items) {
+    const currency = String(item?.currency || '').toUpperCase();
+    if (!/^[A-Z]{3}$/.test(currency) || currency === 'TRY' || !isValidDate(item?.date)) return fail(res, 400, 'Kur listesinde geçersiz para birimi veya tarih var.');
+    unique.set(`${currency}|${item.date}`, { currency, date: item.date });
+  }
+  const latest = new Date(`${localToday()}T00:00:00Z`);
+  latest.setUTCDate(latest.getUTCDate() + 1);
+  if ([...unique.values()].some(item => item.date > latest.toISOString().slice(0, 10))) return fail(res, 400, 'Kur tarihleri bugünden ileri olamaz.');
+  const quotes = await Promise.all([...unique].map(async ([key, item]) => {
+    try { return { key, quote: await getTcmbRate(item.currency, item.date) }; }
+    catch { return { key, quote: null, error: 'Bu tarih için TCMB efektif alış kuru alınamadı.' }; }
+  }));
+  return res.setHeader('Cache-Control', 'private, max-age=300').json({ quotes: Object.fromEntries(quotes.map(item => [item.key, item])) });
+}));
 
 app.get('/api/transactions', route(async (req, res) => {
   const clauses = ['t.user_id=?']; const values = [req.user.id];
@@ -512,6 +550,24 @@ app.delete('/api/transactions/:id', route(async (req, res) => {
   return result.affectedRows ? res.status(204).end() : fail(res, 404, 'İşlem bulunamadı.');
 }));
 
+app.delete('/api/transactions', route(async (req, res) => {
+  const requestedIds = req.body?.ids;
+  if (!Array.isArray(requestedIds) || requestedIds.length < 1 || requestedIds.length > 500
+    || requestedIds.some(id => !Number.isSafeInteger(id) || id < 1)) {
+    return fail(res, 400, 'Silinecek işlem kimlikleri geçersiz; bir istekte en fazla 500 işlem seçilebilir.');
+  }
+  const ids = [...new Set(requestedIds)];
+  const placeholders = ids.map(() => '?').join(',');
+  const deletedAll = await withTransaction(async connection => {
+    const owned = await all(`SELECT id FROM transactions WHERE user_id=? AND id IN (${placeholders}) FOR UPDATE`, [req.user.id, ...ids], connection);
+    if (owned.length !== ids.length) return false;
+    await run(`DELETE FROM transactions WHERE user_id=? AND id IN (${placeholders})`, [req.user.id, ...ids], connection);
+    return true;
+  });
+  if (!deletedAll) return fail(res, 404, 'Seçilen işlemlerden bazıları bulunamadı; hiçbir işlem silinmedi. Listeyi yenileyip tekrar dene.');
+  return res.json({ deleted: ids.length });
+}));
+
 app.get('/api/categories', route(async (req, res) => res.json(rowsAsNumbers(await all('SELECT * FROM categories WHERE user_id=? ORDER BY type,name', [req.user.id]), ['id', 'user_id', 'is_default', 'is_preferred']))));
 app.post('/api/categories', route(async (req, res) => {
   const { name, type, color = '#64748b', icon = 'circle' } = req.body || {};
@@ -565,14 +621,137 @@ app.delete('/api/categories/:id', route(async (req, res) => {
   } catch (error) { if (error.code === 'ER_ROW_IS_REFERENCED_2') return fail(res, 409, 'Bu kategori işlemlerde kullanılıyor.'); throw error; }
 }));
 
+function statementFingerprint(item) {
+  const canonical = [item.transaction_date, item.type, item.currency_code, item.original_amount, normalizeMerchant(item.merchant_name || item.description), normalizeMerchant(item.reference || '')].join('|');
+  return crypto.createHash('sha256').update(canonical).digest('hex');
+}
+
+function likelySameMerchant(left, right) {
+  const a = normalizeMerchant(left);
+  const b = normalizeMerchant(right);
+  return Boolean(a && b && (a === b || (Math.min(a.length, b.length) >= 5 && (a.includes(b) || b.includes(a)))));
+}
+
+function validStatementItem(item) {
+  return item && typeof item === 'object' && !Array.isArray(item)
+    && ['Income', 'Expense'].includes(item.type)
+    && ['standard', 'refund', 'transfer', 'card_payment'].includes(item.entry_kind)
+    && isValidDate(item.transaction_date)
+    && typeof item.description === 'string' && item.description.trim().length > 0 && item.description.trim().length <= 140
+    && /^[A-Z]{3}$/.test(item.currency_code || '')
+    && Number.isSafeInteger(item.original_amount) && item.original_amount > 0
+    && Number.isSafeInteger(item.amount) && item.amount > 0
+    && Number.isFinite(Number(item.exchange_rate)) && Number(item.exchange_rate) > 0
+    && Number.isSafeInteger(item.category_id) && item.category_id > 0;
+}
+
+app.post('/api/statements/check', route(async (req, res) => {
+  const items = req.body?.items;
+  if (!Array.isArray(items) || items.length < 1 || items.length > 1000 || items.some(item => !item || !isValidDate(item.transaction_date) || typeof item.description !== 'string' || item.description.length > 140 || !Number.isSafeInteger(item.original_amount) || item.original_amount < 1 || !/^[A-Z]{3}$/.test(item.currency_code || '') || !['Income', 'Expense'].includes(item.type))) return fail(res, 400, 'Önizleme satırları geçersiz veya 1000 kayıt sınırını aşıyor.');
+  const categories = await all('SELECT id,name,type FROM categories WHERE user_id=? ORDER BY name', [req.user.id]);
+  const merchantRules = await all('SELECT normalized_merchant,category_id FROM merchant_category_rules WHERE user_id=?', [req.user.id]);
+  const rules = new Map(merchantRules.map(item => [item.normalized_merchant, Number(item.category_id)]));
+  const result = [];
+  for (const item of items) {
+    const merchant = normalizeMerchant(item.merchant_name || item.description);
+    const knownCategoryId = rules.get(merchant);
+    const knownCategory = categories.find(category => Number(category.id) === knownCategoryId && category.type === item.type);
+    const suggestion = knownCategory
+      ? { category: knownCategory, confidence: 'high', merchant, rule: 'Kayıtlı tercihin' }
+      : guessCategory(item.merchant_name || item.description, item.type, categories);
+    const fingerprint = statementFingerprint({ ...item, merchant_name: merchant });
+    let duplicate = null;
+    const exact = await get('SELECT id,description,transaction_date FROM transactions WHERE user_id=? AND import_fingerprint=?', [req.user.id, fingerprint]);
+    if (exact) duplicate = { kind: 'exact', transactionId: Number(exact.id), description: exact.description };
+    else {
+      const candidates = await all('SELECT id,description,merchant_name,transaction_date FROM transactions WHERE user_id=? AND transaction_date=? AND original_amount=? AND currency_code=? AND type=? ORDER BY id DESC LIMIT 12', [req.user.id, item.transaction_date, item.original_amount, item.currency_code, item.type]);
+      const likely = candidates.find(candidate => likelySameMerchant(merchant, candidate.merchant_name || candidate.description));
+      if (likely) duplicate = { kind: 'possible', transactionId: Number(likely.id), description: likely.description };
+    }
+    result.push({ categoryId: knownCategory?.id ?? suggestion.category?.id ?? null, categoryName: knownCategory?.name ?? suggestion.category?.name ?? null, confidence: suggestion.confidence, matchedRule: suggestion.rule, merchant, fingerprint, duplicate });
+  }
+  return res.setHeader('Cache-Control', 'no-store').json({ items: result });
+}));
+
+app.post('/api/statements/import', route(async (req, res) => {
+  const body = req.body || {};
+  const items = body.items;
+  if (!/^[a-f0-9]{64}$/.test(body.fileSha256 || '') || typeof body.fileName !== 'string' || !Array.isArray(items) || items.length > 1000 || !Number.isInteger(body.skippedCount) || body.skippedCount < 0 || body.skippedCount > 1000) return fail(res, 400, 'İçe aktarma bilgileri geçersiz.');
+  if (!items.length) return fail(res, 400, 'İçe aktarılacak geçerli bir işlem seçilmedi.');
+  const priorBatch = await get('SELECT id,imported_count,duplicate_count,skipped_count FROM statement_imports WHERE user_id=? AND file_sha256=?', [req.user.id, body.fileSha256]);
+  if (priorBatch) return res.status(409).json({ error: 'Bu ekstre daha önce içe aktarılmış.', duplicateFile: true, result: { imported: 0, duplicates: priorBatch.imported_count + priorBatch.duplicate_count, skipped: priorBatch.skipped_count } });
+
+  let invalid = 0;
+  let skippedKinds = 0;
+  const validItems = [];
+  for (const item of items) {
+    if (item?.entry_kind === 'transfer' || item?.entry_kind === 'card_payment') { skippedKinds += 1; continue; }
+    if (!validStatementItem(item) || (item.entry_kind === 'refund' && item.type !== 'Expense')) { invalid += 1; continue; }
+    const validation = await validateTransaction({ ...item, description: item.description.trim(), rate_source: item.rate_source, rate_effective_date: item.rate_effective_date, tcmb_rate: item.tcmb_rate ?? null }, req.user.id);
+    if (validation) { invalid += 1; continue; }
+    validItems.push({ ...item, description: item.description.trim(), merchant_name: normalizeMerchant(item.merchant_name || item.description), fingerprint: statementFingerprint(item) });
+  }
+  if (!validItems.length) return res.status(422).json({ error: 'Geçerli kayıt bulunamadı. Ekstre satırlarını ve para birimi kurlarını gözden geçir.', result: { imported: 0, duplicates: 0, skipped: Number(body.skippedCount) + skippedKinds, invalid } });
+
+  let outcome;
+  try {
+    outcome = await withTransaction(async connection => {
+      const extension = path.extname(body.fileName).toLowerCase();
+      const fileName = ['.csv','.xls','.xlsx','.pdf'].includes(extension) ? `Ekstre${extension}` : 'Ekstre';
+      const batch = await run('INSERT INTO statement_imports(user_id,file_sha256,file_name,source_count,skipped_count) VALUES (?,?,?,?,?)', [req.user.id, body.fileSha256, fileName, items.length + Number(body.skippedCount), Number(body.skippedCount) + skippedKinds], connection);
+      const batchId = Number(batch.insertId);
+      let imported = 0;
+      let duplicates = 0;
+      let potentialDuplicates = 0;
+      for (const item of validItems) {
+        if (item.duplicateKind === 'possible' && item.confirmPotentialDuplicate !== true) { potentialDuplicates += 1; continue; }
+        const prior = await get('SELECT id FROM transactions WHERE user_id=? AND import_fingerprint=?', [req.user.id, item.fingerprint], connection);
+        if (prior) { duplicates += 1; continue; }
+        const sameDay = await all('SELECT id,merchant_name,description FROM transactions WHERE user_id=? AND transaction_date=? AND original_amount=? AND currency_code=? AND type=? LIMIT 12', [req.user.id, item.transaction_date, item.original_amount, item.currency_code, item.type], connection);
+        const possible = sameDay.find(candidate => likelySameMerchant(item.merchant_name, candidate.merchant_name || candidate.description));
+        if (possible && item.confirmPotentialDuplicate !== true) { potentialDuplicates += 1; continue; }
+        let inserted;
+        try {
+          inserted = await run('INSERT INTO transactions(user_id,type,amount,original_amount,currency_code,exchange_rate,tcmb_rate,rate_source,rate_effective_date,entry_kind,merchant_name,import_fingerprint,import_batch_id,description,category_id,transaction_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [req.user.id, item.type, item.amount, item.original_amount, item.currency_code, String(item.exchange_rate), item.tcmb_rate ? String(item.tcmb_rate) : null, item.rate_source, item.rate_effective_date || null, item.entry_kind, item.merchant_name, item.fingerprint, batchId, item.description, item.category_id, item.transaction_date], connection);
+        } catch (error) {
+          if (error.code === 'ER_DUP_ENTRY') { duplicates += 1; continue; }
+          throw error;
+        }
+        await run('INSERT INTO exchange_rate_logs(transaction_id,user_id,currency_code,original_amount,try_amount,applied_rate,tcmb_rate,rate_source,rate_effective_date) VALUES (?,?,?,?,?,?,?,?,?)', [inserted.insertId, req.user.id, item.currency_code, item.original_amount, item.amount, String(item.exchange_rate), item.tcmb_rate ? String(item.tcmb_rate) : null, item.rate_source, item.rate_effective_date || null], connection);
+        if (item.learnMerchant && item.merchant_name) {
+          await run('INSERT INTO merchant_category_rules(user_id,normalized_merchant,category_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE category_id=VALUES(category_id)', [req.user.id, item.merchant_name, item.category_id], connection);
+        }
+        imported += 1;
+      }
+      const skipped = Number(body.skippedCount) + skippedKinds + invalid + potentialDuplicates;
+      await run('UPDATE statement_imports SET imported_count=?,duplicate_count=?,skipped_count=? WHERE id=? AND user_id=?', [imported, duplicates, skipped, batchId, req.user.id], connection);
+      return { imported, duplicates, skipped, potentialDuplicates, invalid, batchId };
+    });
+  } catch (error) {
+    if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Bu ekstre eş zamanlı bir işlemde zaten içe aktarılmış.', duplicateFile: true });
+    throw error;
+  }
+  return res.status(201).json({ result: outcome });
+}));
+
+app.get('/api/merchant-rules', route(async (req, res) => res.json(await all('SELECT r.normalized_merchant,r.category_id,c.name AS category,c.type FROM merchant_category_rules r JOIN categories c ON c.id=r.category_id AND c.user_id=r.user_id WHERE r.user_id=? ORDER BY r.normalized_merchant', [req.user.id]))));
+app.delete('/api/merchant-rules/:merchant', route(async (req, res) => {
+  const merchant = normalizeMerchant(req.params.merchant);
+  if (!merchant) return fail(res, 400, 'İş yeri adı geçersiz.');
+  await run('DELETE FROM merchant_category_rules WHERE user_id=? AND normalized_merchant=?', [req.user.id, merchant]);
+  return res.status(204).end();
+}));
+
+app.get('/api/statements', route(async (req, res) => res.json(rowsAsNumbers(await all('SELECT id,file_name,source_count,imported_count,duplicate_count,skipped_count,created_at FROM statement_imports WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 50', [req.user.id]), ['id','source_count','imported_count','duplicate_count','skipped_count']))));
+
 app.get('/api/dashboard/summary', route(async (req, res) => {
-  const totals = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' THEN amount ELSE 0 END),0) income, COALESCE(SUM(CASE WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=?", [req.user.id]);
+  const totals = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income, COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=?", [req.user.id]);
   const monthParts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit' }).formatToParts(new Date()).map(part => [part.type, part.value]));
   const month = `${monthParts.year}-${monthParts.month}`; const previous = new Date(`${month}-01T00:00:00Z`); previous.setUTCMonth(previous.getUTCMonth() - 1); const priorMonth = previous.toISOString().slice(0, 7);
-  const monthly = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? AND DATE_FORMAT(transaction_date,'%Y-%m')=?", [req.user.id, month]);
-  const prior = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? AND DATE_FORMAT(transaction_date,'%Y-%m')=?", [req.user.id, priorMonth]);
+  const monthly = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? AND DATE_FORMAT(transaction_date,'%Y-%m')=?", [req.user.id, month]);
+  const prior = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? AND DATE_FORMAT(transaction_date,'%Y-%m')=?", [req.user.id, priorMonth]);
   const recent = rowsAsNumbers(await all(`${transactionSelect} WHERE t.user_id=? ORDER BY t.transaction_date DESC,t.id DESC LIMIT 6`, [req.user.id]), ['id', 'amount', 'original_amount', 'exchange_rate', 'tcmb_rate', 'category_id']);
-  const categories = rowsAsNumbers(await all("SELECT c.name,c.color,COALESCE(SUM(t.amount),0) amount FROM categories c LEFT JOIN transactions t ON t.category_id=c.id AND t.user_id=c.user_id AND t.type='Expense' AND DATE_FORMAT(t.transaction_date,'%Y-%m')=? WHERE c.user_id=? AND c.type='Expense' GROUP BY c.id HAVING amount>0 ORDER BY amount DESC", [month, req.user.id]), ['amount']);
+  const categories = rowsAsNumbers(await all("SELECT c.name,c.color,COALESCE(SUM(CASE WHEN t.entry_kind='refund' THEN -t.amount ELSE t.amount END),0) amount FROM categories c LEFT JOIN transactions t ON t.category_id=c.id AND t.user_id=c.user_id AND t.type='Expense' AND DATE_FORMAT(t.transaction_date,'%Y-%m')=? WHERE c.user_id=? AND c.type='Expense' GROUP BY c.id HAVING amount>0 ORDER BY amount DESC", [month, req.user.id]), ['amount']);
   return res.json({ balance: Number(totals.income) - Number(totals.expense), income: Number(totals.income), expense: Number(totals.expense), monthIncome: Number(monthly.income), monthExpense: Number(monthly.expense), previousMonthIncome: Number(prior.income), previousMonthExpense: Number(prior.expense), recent, categories });
 }));
 
@@ -581,11 +760,241 @@ app.get('/api/reports/monthly', route(async (req, res) => {
   if (typeof req.query.year !== 'undefined' && (typeof req.query.year !== 'string' || !/^\d{4}$/.test(req.query.year) || !Number.isInteger(year) || year < 1000 || year > 9999)) {
     return fail(res, 400, 'Rapor yılı 1000 ile 9999 arasında geçerli bir yıl olmalı.');
   }
-  const rows = await all("SELECT LPAD(MONTH(transaction_date),2,'0') month,COALESCE(SUM(CASE WHEN type='Income' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? AND YEAR(transaction_date)=? GROUP BY MONTH(transaction_date) ORDER BY MONTH(transaction_date)", [req.user.id, year]);
+  const rows = await all("SELECT LPAD(MONTH(transaction_date),2,'0') month,COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? AND YEAR(transaction_date)=? GROUP BY MONTH(transaction_date) ORDER BY MONTH(transaction_date)", [req.user.id, year]);
   const map = new Map(rows.map(row => [Number(row.month), row]));
   return res.json(Array.from({ length: 12 }, (_, index) => asNumbers(map.get(index + 1) || { month: String(index + 1).padStart(2, '0'), income: 0, expense: 0 }, ['income', 'expense'])));
 }));
-app.get('/api/reports/yearly', route(async (req, res) => res.json(rowsAsNumbers(await all("SELECT CAST(YEAR(transaction_date) AS CHAR) year,COALESCE(SUM(CASE WHEN type='Income' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? GROUP BY YEAR(transaction_date) ORDER BY YEAR(transaction_date) DESC", [req.user.id]), ['income', 'expense']))));
+app.get('/api/reports/yearly', route(async (req, res) => res.json(rowsAsNumbers(await all("SELECT CAST(YEAR(transaction_date) AS CHAR) year,COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? GROUP BY YEAR(transaction_date) ORDER BY YEAR(transaction_date) DESC", [req.user.id]), ['income', 'expense']))));
+
+function shiftMonth(date, offset) {
+  const result = new Date(`${date}T00:00:00Z`);
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + offset);
+  return result.toISOString().slice(0, 10);
+}
+
+function endOfMonth(date) {
+  const result = new Date(`${date.slice(0, 7)}-01T00:00:00Z`);
+  result.setUTCMonth(result.getUTCMonth() + 1);
+  result.setUTCDate(0);
+  return result.toISOString().slice(0, 10);
+}
+
+function netPeriod(transactions) {
+  return transactions.reduce((sum, transaction) => {
+    const amount = Number(transaction.amount) || 0;
+    if (transaction.entry_kind === 'refund') sum.expense -= amount;
+    else if (transaction.type === 'Income') sum.income += amount;
+    else if (!['transfer', 'card_payment'].includes(transaction.entry_kind)) sum.expense += amount;
+    return sum;
+  }, { income: 0, expense: 0 });
+}
+
+async function getAnalysisTransactions(userId, from) {
+  return rowsAsNumbers(await all(`${transactionSelect} WHERE t.user_id=? AND t.transaction_date>=? ORDER BY t.transaction_date,t.id LIMIT 10000`, [userId, from]), ['id','amount','original_amount','exchange_rate','tcmb_rate','category_id']);
+}
+
+app.get('/api/reports/analysis', route(async (req, res) => {
+  const today = localToday();
+  const defaultFrom = shiftMonth(today, -6);
+  const from = req.query.from === undefined ? defaultFrom : req.query.from;
+  const to = req.query.to === undefined ? today : req.query.to;
+  if (!isValidDate(from) || !isValidDate(to) || from > to || to > today) return fail(res, 400, 'Analiz tarih aralığı geçersiz. Tarihler bugünden ileri olamaz.');
+  const transactions = await getAnalysisTransactions(req.user.id, shiftMonth(today, -13));
+  const selected = transactions.filter(item => item.transaction_date >= from && item.transaction_date <= to);
+  const summary = netPeriod(selected);
+  const categoryTotals = new Map();
+  const merchants = new Map();
+  for (const item of selected) {
+    const kind = item.entry_kind || 'standard';
+    if (item.type === 'Expense' && !['transfer','card_payment'].includes(kind)) {
+      const name = item.category || 'Diğer';
+      categoryTotals.set(name, (categoryTotals.get(name) || 0) + (kind === 'refund' ? -item.amount : item.amount));
+      const merchant = item.merchant_name || item.description;
+      const merchantKey = normalizeMerchant(merchant);
+      if (merchantKey) {
+        const value = merchants.get(merchantKey) || { merchant, count: 0, amount: 0 };
+        value.count += 1;
+        value.amount += kind === 'refund' ? -item.amount : item.amount;
+        merchants.set(merchantKey, value);
+      }
+    }
+  }
+  const end = new Date(`${today}T00:00:00Z`);
+  const habits = analyzeSpending(transactions.map(item => ({ ...item, entry_kind: item.entry_kind || 'standard' })), { today: end });
+  const monthStart = shiftMonth(today, 0);
+  const currentMonth = netPeriod(transactions.filter(item => item.transaction_date >= monthStart && item.transaction_date <= today));
+  const previousMonthKey = shiftMonth(today, -1).slice(0, 7);
+  const currentMonthKey = today.slice(0, 7);
+  const trend = habits.monthlyHistory.filter(item => item.month >= shiftMonth(today, -6).slice(0, 7));
+  const payrollStart = shiftMonth(today, -3);
+  const payrollDates = transactions.filter(item => item.transaction_date >= payrollStart && item.type === 'Income' && item.entry_kind !== 'refund' && /maaş|maas|salary|bordro/i.test(`${item.category} ${item.description}`)).map(item => item.transaction_date);
+  const payrollSpending = payrollDates.map(date => transactions.filter(item => item.type === 'Expense' && item.entry_kind !== 'refund' && item.transaction_date >= date && item.transaction_date < new Date(new Date(`${date}T00:00:00Z`).valueOf() + 7 * 86_400_000).toISOString().slice(0, 10)).reduce((sum, item) => sum + item.amount, 0));
+  const feedbackRows = await all('SELECT recommendation_fingerprint,action FROM recommendation_feedback WHERE user_id=?', [req.user.id]);
+  const feedback = new Map(feedbackRows.map(item => [item.recommendation_fingerprint, item.action]));
+  const recommendations = habits.recommendations.map(item => {
+    const fingerprint = crypto.createHash('sha256').update(JSON.stringify([item.kind, item.category || '', item.merchant || '', today.slice(0, 7)])).digest('hex');
+    const impact = item.kind === 'category_increase' ? Math.max(0, item.current30Days - item.prior90DayMonthlyAverage) : null;
+    return { ...item, fingerprint, expectedImpact: impact, impactBasis: impact === null ? 'İşlem sayısı ve mevcut harcama gösterilir; tasarruf tutarı veriden güvenilir hesaplanamıyor.' : 'Harcama geçmiş 90 günün aylık ortalamasına dönerse oluşabilecek fark; garanti değildir.', feedback: feedback.get(fingerprint) || null };
+  }).filter(item => item.feedback !== 'rejected' && item.feedback !== 'dismissed');
+  if (currentMonth.income > 0 && currentMonth.expense > currentMonth.income) {
+    const fingerprint = crypto.createHash('sha256').update(JSON.stringify(['monthly_deficit', today.slice(0, 7)])).digest('hex');
+    const action = feedback.get(fingerprint) || null;
+    if (action !== 'rejected' && action !== 'dismissed') recommendations.unshift({ kind: 'monthly_deficit', fingerprint, explanation: `Bu ay şu ana kadarki kayıtlı giderler geliri ${new Intl.NumberFormat('tr-TR').format(currentMonth.expense - currentMonth.income)} TL aşıyor.`, expectedImpact: null, impactBasis: 'Mevcut kayıtlı tutarlara dayanır; gelecek harcama tahmini değildir.', confidence: 'high', feedback: action });
+  }
+  return res.setHeader('Cache-Control', 'no-store').json({
+    from, to, summary: { ...summary, net: summary.income - summary.expense, savingsRate: summary.income > 0 ? (summary.income - summary.expense) / summary.income : null },
+    currentMonth: { ...currentMonth, net: currentMonth.income - currentMonth.expense, savingsRate: currentMonth.income > 0 ? (currentMonth.income - currentMonth.expense) / currentMonth.income : null },
+    monthlyTrend: trend, previousMonth: previousMonthKey, currentMonthKey,
+    categories: [...categoryTotals].filter(([, amount]) => amount > 0).map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount),
+    topMerchants: [...merchants.values()].filter(item => item.amount > 0).sort((a, b) => b.count - a.count || b.amount - a.amount).slice(0, 10),
+    fixedAndVariable: { repeatedMerchantExpense: habits.repeatedMerchants.reduce((sum, item) => sum + item.amount, 0), otherExpense: Math.max(0, netPeriod(transactions.filter(item => item.transaction_date >= new Date(end.valueOf() - 30 * 86_400_000).toISOString().slice(0, 10) && item.transaction_date <= today && item.type === 'Expense')).expense - habits.repeatedMerchants.reduce((sum, item) => sum + item.amount, 0)), explanation: 'Tekrarlayan işyeri hareketleri sabit gider göstergesi olarak değerlendirilir; bu sınıflandırma kesin değildir.' },
+    payrollAfterSpend: payrollSpending.length ? { observations: payrollSpending.length, medianSevenDayExpense: Math.round([...payrollSpending].sort((a, b) => a - b)[Math.floor(payrollSpending.length / 2)]), confidence: payrollSpending.length >= 3 ? 'medium' : 'low' } : null,
+    habits, recommendations,
+    financialStatus: { recurringDeficitMonths: habits.monthlyHistory.filter(item => item.income > 0 && item.expense > item.income).length, historyMonths: habits.monthlyHistory.length },
+  });
+}));
+
+app.post('/api/reports/recommendations/:fingerprint/feedback', route(async (req, res) => {
+  const fingerprint = req.params.fingerprint;
+  const action = req.body?.action;
+  if (!/^[a-f0-9]{64}$/.test(fingerprint) || !['accepted','rejected','dismissed'].includes(action)) return fail(res, 400, 'Öneri geri bildirimi geçersiz.');
+  await run('INSERT INTO recommendation_feedback(user_id,recommendation_fingerprint,action) VALUES (?,?,?) ON DUPLICATE KEY UPDATE action=VALUES(action),created_at=CURRENT_TIMESTAMP', [req.user.id, fingerprint, action]);
+  return res.json({ fingerprint, action });
+}));
+
+app.get('/api/plans/preferences', route(async (req, res) => {
+  const today = localToday();
+  const firstMonth = shiftMonth(today, -3);
+  const data = await all("SELECT c.id,c.name,COALESCE(SUM(CASE WHEN t.entry_kind='refund' THEN -t.amount ELSE t.amount END),0) total FROM categories c LEFT JOIN transactions t ON t.category_id=c.id AND t.user_id=c.user_id AND t.type='Expense' AND t.transaction_date>=? AND t.transaction_date<? WHERE c.user_id=? AND c.type='Expense' GROUP BY c.id ORDER BY total DESC,c.name", [firstMonth, shiftMonth(today, 0), req.user.id]);
+  const saved = await all('SELECT category_id,protected_amount,reduction_rate FROM plan_category_preferences WHERE user_id=?', [req.user.id]);
+  const savedMap = new Map(saved.map(item => [Number(item.category_id), item]));
+  const output = data.map(item => {
+    const preference = savedMap.get(Number(item.id));
+    const average = Math.max(0, Math.round(Number(item.total) / 3));
+    return { categoryId: Number(item.id), name: item.name, monthlyAverage: average, protectedAmount: preference ? Number(preference.protected_amount) : average, reductionRate: preference ? Number(preference.reduction_rate) : 0, configured: Boolean(preference) };
+  });
+  return res.json({ categories: output, monthsUsed: 3, currency: 'TRY' });
+}));
+
+app.put('/api/plans/preferences', route(async (req, res) => {
+  const preferences = req.body?.categories;
+  if (!Array.isArray(preferences) || preferences.length > 200) return fail(res, 400, 'Kategori tercihleri geçersiz.');
+  const ownCategories = new Set((await all("SELECT id FROM categories WHERE user_id=? AND type='Expense'", [req.user.id])).map(item => Number(item.id)));
+  for (const item of preferences) {
+    if (!Number.isInteger(item.categoryId) || !ownCategories.has(item.categoryId) || !Number.isSafeInteger(item.protectedAmount) || item.protectedAmount < 0 || !Number.isFinite(item.reductionRate) || item.reductionRate < 0 || item.reductionRate > 0.8) return fail(res, 400, 'Korunacak tutar veya azaltma oranı geçersiz.');
+  }
+  await withTransaction(async connection => {
+    for (const item of preferences) await run('INSERT INTO plan_category_preferences(user_id,category_id,protected_amount,reduction_rate) VALUES (?,?,?,?) ON DUPLICATE KEY UPDATE protected_amount=VALUES(protected_amount),reduction_rate=VALUES(reduction_rate)', [req.user.id, item.categoryId, item.protectedAmount, item.reductionRate,], connection);
+  });
+  return res.json({ saved: preferences.length });
+}));
+
+async function makePlanInputs(userId) {
+  const today = localToday();
+  const currentStart = shiftMonth(today, 0);
+  const firstMonth = shiftMonth(today, -3);
+  const rows = await all('SELECT t.type,t.amount,t.entry_kind,t.category_id,c.name AS category,t.transaction_date FROM transactions t JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id WHERE t.user_id=? AND t.transaction_date>=? AND t.transaction_date<? ORDER BY t.transaction_date', [userId, firstMonth, currentStart]);
+  const monthly = new Map();
+  const categoryMonthly = new Map();
+  for (let offset = 3; offset > 0; offset -= 1) {
+    const month = shiftMonth(today, -offset).slice(0, 7);
+    monthly.set(month, { income: 0, expense: 0 });
+  }
+  for (const row of rows) {
+    const month = row.transaction_date.slice(0, 7);
+    if (!monthly.has(month)) continue;
+    const value = monthly.get(month);
+    const amount = Number(row.amount);
+    if (row.entry_kind === 'refund') value.expense -= amount;
+    else if (row.type === 'Income') value.income += amount;
+    else value.expense += amount;
+    if (row.type === 'Expense') {
+      const key = `${row.category_id}:${month}`;
+      categoryMonthly.set(key, (categoryMonthly.get(key) || 0) + (row.entry_kind === 'refund' ? -amount : amount));
+    }
+  }
+  const nonEmpty = [...monthly.values()].filter(item => item.income > 0 || item.expense > 0);
+  if (nonEmpty.length < 2) return { today, currentStart, months: [...monthly], availableMonths: nonEmpty.length, monthlyIncome: 0, monthlyExpense: 0, categories: [] };
+  const medianInteger = values => Math.round(values.sort((a, b) => a - b)[Math.floor(values.length / 2)]);
+  const monthlyIncome = medianInteger([...monthly.values()].map(item => item.income));
+  const monthlyExpense = medianInteger([...monthly.values()].map(item => item.expense));
+  const categories = await all("SELECT id,name FROM categories WHERE user_id=? AND type='Expense' ORDER BY name", [userId]);
+  const preferences = await all('SELECT category_id,protected_amount,reduction_rate FROM plan_category_preferences WHERE user_id=?', [userId]);
+  const pref = new Map(preferences.map(item => [Number(item.category_id), item]));
+  const planCategories = categories.map(category => {
+    const totals = [...monthly.keys()].map(month => categoryMonthly.get(`${Number(category.id)}:${month}`) || 0);
+    const average = medianInteger(totals);
+    const item = pref.get(Number(category.id));
+    return { name: category.name, categoryId: Number(category.id), monthlyAverage: Math.max(0, average), protectedAmount: item ? Number(item.protected_amount) : Math.max(0, average), reductionRate: item ? Number(item.reduction_rate) : 0 };
+  });
+  return { today, currentStart, months: [...monthly], availableMonths: nonEmpty.length, monthlyIncome, monthlyExpense, categories: planCategories };
+}
+
+app.get('/api/plans/scenarios', route(async (req, res) => {
+  const targetSavings = Number(req.query.targetSavings);
+  if (!Number.isSafeInteger(targetSavings) || targetSavings < 0) return fail(res, 400, 'Aylık birikim hedefi kuruş cinsinden geçerli bir sayı olmalı.');
+  const inputs = await makePlanInputs(req.user.id);
+  if (inputs.availableMonths < 3) return res.status(422).json({ error: 'Kişisel plan için en az üç tamamlanmış ayın işlem geçmişi gerekli.', availableMonths: inputs.availableMonths });
+  const calculation = buildFinancialPlan({ monthlyIncome: inputs.monthlyIncome, monthlyExpense: inputs.monthlyExpense, targetSavings, categories: inputs.categories });
+  const scenarios = calculation.scenarios.map(scenario => ({ ...scenario, categoryTargets: scenario.categoryTargets.map(target => ({ ...target, categoryId: calculation.categories.find(category => category.name === target.category)?.categoryId })) }));
+  return res.json({ inputs: { monthlyIncome: inputs.monthlyIncome, monthlyExpense: inputs.monthlyExpense, targetSavings, currentNet: calculation.currentNet, currentDeficit: calculation.currentDeficit, requiredImprovement: calculation.requiredImprovement, totalReductionCapacity: calculation.totalReductionCapacity, feasible: calculation.feasible, confidence: 'medium', monthsUsed: inputs.availableMonths }, scenarios });
+}));
+
+app.post('/api/plans', route(async (req, res) => {
+  const targetSavings = req.body?.targetSavings;
+  const scenarioId = req.body?.scenarioId;
+  const planName = typeof req.body?.name === 'string' ? req.body.name.trim().slice(0, 80) : '';
+  if (!Number.isSafeInteger(targetSavings) || targetSavings < 0 || !['relaxed','balanced','aggressive'].includes(scenarioId)) return fail(res, 400, 'Plan hedefi veya senaryo geçersiz.');
+  const inputs = await makePlanInputs(req.user.id);
+  if (inputs.availableMonths < 3) return fail(res, 422, 'Kişisel plan için en az üç tamamlanmış ayın işlem geçmişi gerekli.');
+  const calculation = buildFinancialPlan({ monthlyIncome: inputs.monthlyIncome, monthlyExpense: inputs.monthlyExpense, targetSavings, categories: inputs.categories });
+  const selected = calculation.scenarios.find(item => item.id === scenarioId);
+  const categoryTargets = selected.categoryTargets.map(target => ({ ...target, categoryId: calculation.categories.find(category => category.name === target.category)?.categoryId }));
+  const snapshot = { monthlyIncome: inputs.monthlyIncome, monthlyExpense: inputs.monthlyExpense, requiredImprovement: calculation.requiredImprovement, totalReductionCapacity: calculation.totalReductionCapacity, availableMonths: inputs.availableMonths, confidence: inputs.availableMonths >= 3 ? 'medium' : 'low', feasible: calculation.feasible };
+  const id = await withTransaction(async connection => {
+    await run("UPDATE financial_plans SET status='archived' WHERE user_id=? AND status='active'", [req.user.id], connection);
+    const inserted = await run('INSERT INTO financial_plans(user_id,name,start_date,end_date,target_savings,requested_improvement,planned_improvement,category_targets,input_snapshot,status) VALUES (?,?,?,?,?,?,?,?,?,\'active\')', [req.user.id, planName || `${selected.label} plan`, inputs.today, endOfMonth(inputs.today), targetSavings, selected.requestedImprovement, selected.attainableImprovement, JSON.stringify(categoryTargets), JSON.stringify(snapshot)], connection);
+    return Number(inserted.insertId);
+  });
+  return res.status(201).json({ id, scenario: selected, calculation: snapshot });
+}));
+
+app.get('/api/plans/current', route(async (req, res) => {
+  const plan = await get("SELECT id,name,start_date,end_date,target_savings,requested_improvement,planned_improvement,category_targets,input_snapshot,status,created_at FROM financial_plans WHERE user_id=? AND status='active' ORDER BY created_at DESC,id DESC LIMIT 1", [req.user.id]);
+  if (!plan) return res.json({ plan: null });
+  const categories = JSON.parse(plan.category_targets || '[]');
+  const today = localToday();
+  const monthStart = shiftMonth(today, 0);
+  const current = await all("SELECT category_id,COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount ELSE amount END),0) spent FROM transactions WHERE user_id=? AND type='Expense' AND transaction_date>=? AND transaction_date<=? GROUP BY category_id", [req.user.id, monthStart, today]);
+  const byCategory = new Map(current.map(item => [Number(item.category_id), Number(item.spent)]));
+  const resultCategories = [];
+  for (const category of categories) {
+    const currentTotal = byCategory.get(Number(category.categoryId)) || 0;
+    const beforeStart = await get("SELECT COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount ELSE amount END),0) spent FROM transactions WHERE user_id=? AND type='Expense' AND category_id=? AND transaction_date>=? AND transaction_date<?", [req.user.id, category.categoryId, monthStart, plan.start_date]);
+    const amountAlreadySpent = Math.max(0, Number(beforeStart?.spent) || 0);
+    const targetAvailableAtStart = Math.max(0, Number(category.monthlyLimit) - amountAlreadySpent);
+    const spentAfterStart = Math.max(0, currentTotal - amountAlreadySpent);
+    const remaining = targetAvailableAtStart - spentAfterStart;
+    resultCategories.push({ ...category, spent: currentTotal, remaining, weeklyBudget: Math.floor(remaining / Math.max(1, Number(endOfMonth(today).slice(-2)) - Number(today.slice(-2)) + 1) * 7), exceeded: remaining < 0, progressPercent: targetAvailableAtStart > 0 ? Math.min(100, Math.round(spentAfterStart / targetAvailableAtStart * 100)) : (spentAfterStart > 0 ? 100 : 0) });
+    await run('INSERT IGNORE INTO plan_progress(plan_id,user_id,recorded_on,category_id,spent_amount,target_amount) VALUES (?,?,?,?,?,?)', [plan.id, req.user.id, today, category.categoryId, Math.min(Number.MAX_SAFE_INTEGER, currentTotal), Math.min(Number.MAX_SAFE_INTEGER, Number(category.monthlyLimit))]);
+  }
+  return res.json({ plan: { ...asNumbers(plan, ['id','target_savings','requested_improvement','planned_improvement']), category_targets: resultCategories, input_snapshot: JSON.parse(plan.input_snapshot || '{}') } });
+}));
+
+app.get('/api/plans/history', route(async (req, res) => {
+  const plans = await all('SELECT id,name,start_date,end_date,target_savings,requested_improvement,planned_improvement,status,created_at FROM financial_plans WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 24', [req.user.id]);
+  return res.json(rowsAsNumbers(plans, ['id','target_savings','requested_improvement','planned_improvement']));
+}));
+
+app.patch('/api/plans/:id/status', route(async (req, res) => {
+  const id = positiveId(req.params.id);
+  const status = req.body?.status;
+  if (!id || !['completed','archived'].includes(status)) return fail(res, 400, 'Plan durumu geçersiz.');
+  const result = await run('UPDATE financial_plans SET status=? WHERE id=? AND user_id=?', [status, id, req.user.id]);
+  if (!result.affectedRows) return fail(res, 404, 'Plan bulunamadı.');
+  return res.json({ id, status });
+}));
 app.get('/api/settings', route(async (req, res) => res.json(await get('SELECT currency,theme,language FROM settings WHERE user_id=?', [req.user.id]))));
 app.put('/api/settings', route(async (req, res) => {
   const { currency = 'TRY', theme = 'light', language = 'tr' } = req.body || {};
@@ -596,6 +1005,12 @@ app.put('/api/settings', route(async (req, res) => {
 app.use('/api', (_req, res) => fail(res, 404, 'API endpoint bulunamadı.'));
 app.use((error, _req, res, _next) => {
   console.error('Request failed:', error.code || 'UNKNOWN');
+  if (error.code === 'ER_TOO_MANY_USER_CONNECTIONS' || error.code === 'ER_CON_COUNT_ERROR') {
+    return fail(res, 503, 'MySQL eşzamanlı bağlantı sınırına ulaşıldı. API bağlantı havuzu azaltıldı; sunucuyu yeniden başlatıp tekrar deneyin.');
+  }
+  if (['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'PROTOCOL_CONNECTION_LOST'].includes(error.code)) {
+    return fail(res, 503, 'MySQL bağlantısı şu anda kullanılamıyor. Veritabanı sunucusunu kontrol edip tekrar deneyin.');
+  }
   return res.status(error.status || 500).json({ error: error.status === 400 ? 'İstek gövdesi geçersiz JSON içeriyor.' : 'Beklenmeyen sunucu hatası.' });
 });
 

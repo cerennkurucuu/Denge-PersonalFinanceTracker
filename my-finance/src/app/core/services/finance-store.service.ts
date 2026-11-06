@@ -73,7 +73,7 @@ export class FinanceStoreService {
   }
 
   get reportExpense(): number {
-    return this.reportTransactions.reduce((sum, item) => sum + (item.type === 'Expense' ? item.amount : 0), 0);
+    return this.reportTransactions.reduce((sum, item) => sum + (item.type === 'Expense' ? (item.entry_kind === 'refund' ? -item.amount : item.amount) : 0), 0);
   }
 
   get reportSavings(): number {
@@ -85,10 +85,10 @@ export class FinanceStoreService {
     for (const transaction of this.reportTransactions) {
       if (transaction.type !== 'Expense') continue;
       const current = totals.get(transaction.category) ?? { name: transaction.category, color: transaction.category_color, amount: 0 };
-      current.amount += transaction.amount;
+      current.amount += transaction.entry_kind === 'refund' ? -transaction.amount : transaction.amount;
       totals.set(transaction.category, current);
     }
-    return [...totals.values()].sort((a, b) => b.amount - a.amount);
+    return [...totals.values()].filter(item => item.amount > 0).sort((a, b) => b.amount - a.amount);
   }
 
   get availableCategories(): Category[] {
@@ -395,7 +395,7 @@ export class FinanceStoreService {
       ['Tarih', 'Tür', 'Açıklama', 'Kategori', 'Orijinal tutar', 'Para birimi', 'Uygulanan kur', 'Kur kaynağı', 'Kur tarihi', 'TL karşılığı'],
       ...this.visibleTransactions.map(item => [
         this.format.formatDate(item.transaction_date),
-        item.type === 'Income' ? 'Gelir' : 'Gider',
+        item.entry_kind === 'refund' ? 'İade' : item.type === 'Income' ? 'Gelir' : 'Gider',
         item.description,
         item.category,
         this.format.formatMinorUnits(item.original_amount, item.currency_code),
@@ -403,7 +403,7 @@ export class FinanceStoreService {
         item.exchange_rate,
         item.rate_source === 'TCMB' ? 'TCMB efektif alış' : item.rate_source === 'manual' ? 'Elle' : '—',
         item.rate_effective_date || '',
-        (item.amount / 100).toFixed(2),
+        ((item.entry_kind === 'refund' ? -item.amount : item.amount) / 100).toFixed(2),
       ]),
     ];
     this.downloadCsv(rows, `denge-islemler_${this.transactionFrom || 'tum'}_${this.transactionTo || 'tum'}.csv`);
@@ -426,7 +426,7 @@ export class FinanceStoreService {
       ['Tarih', 'Tür', 'Açıklama', 'Kategori', 'Orijinal tutar', 'Para birimi', 'Uygulanan kur', 'Kur kaynağı', 'Kur tarihi', 'TL karşılığı'],
       ...this.reportTransactions.map(item => [
         this.format.formatDate(item.transaction_date),
-        item.type === 'Income' ? 'Gelir' : 'Gider',
+        item.entry_kind === 'refund' ? 'İade' : item.type === 'Income' ? 'Gelir' : 'Gider',
         item.description,
         item.category,
         this.format.formatMinorUnits(item.original_amount, item.currency_code),
@@ -434,7 +434,7 @@ export class FinanceStoreService {
         item.exchange_rate,
         item.rate_source === 'TCMB' ? 'TCMB efektif alış' : item.rate_source === 'manual' ? 'Elle' : '—',
         item.rate_effective_date || '',
-        (item.amount / 100).toFixed(2),
+        ((item.entry_kind === 'refund' ? -item.amount : item.amount) / 100).toFixed(2),
       ]),
     ];
     this.downloadCsv(rows, `denge-rapor_${this.reportFrom}_${this.reportTo}.csv`);

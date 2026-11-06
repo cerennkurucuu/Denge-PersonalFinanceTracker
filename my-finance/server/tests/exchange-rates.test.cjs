@@ -94,7 +94,7 @@ test('uses the rate announced on the prior business day for a transaction date',
   const requestedUrls = [];
   const fetchFixture = async url => {
     requestedUrls.push(url);
-    assert.equal(url, 'https://www.tcmb.gov.tr/kurlar/today.xml');
+    assert.equal(url, 'https://www.tcmb.gov.tr/kurlar/202611/02112026.xml');
     return '<Tarih_Date Tarih="02.11.2026"><Currency CurrencyCode="EUR"><Unit>1</Unit><BanknoteBuying>49.1250</BanknoteBuying></Currency></Tarih_Date>';
   };
 

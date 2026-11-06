@@ -2,9 +2,25 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
-  AuthUser, Category, CategoryFormValue, DashboardSummary, ExchangeRate, ExchangeRateLog, MonthlyReport,
+  ActiveFinancialPlan, AuthUser, Category, CategoryFormValue, DashboardSummary, ExchangeRate, ExchangeRateLog, FinancialAnalysis, MonthlyReport, PlanCategoryPreference, PlanScenarioPreview,
   Settings, Transaction, TransactionFormValue,
 } from '../models/finance.models';
+
+export interface ExchangeRatesBatchResult {
+  quotes: Record<string, { quote: ExchangeRate | null; error?: string }>;
+}
+
+export interface StatementCheckResult {
+  items: Array<{
+    categoryId: number | null;
+    categoryName: string | null;
+    confidence: 'high' | 'medium' | 'low';
+    matchedRule: string | null;
+    merchant: string;
+    fingerprint: string;
+    duplicate: null | { kind: 'exact' | 'possible'; transactionId: number; description: string };
+  }>;
+}
 
 @Injectable({ providedIn: 'root' })
 export class FinanceApiService {
@@ -42,6 +58,58 @@ export class FinanceApiService {
     return this.http.get<ExchangeRate>(`/api/exchange-rates?currency=${encodeURIComponent(currency)}&date=${encodeURIComponent(date)}`);
   }
 
+  getExchangeRatesBatch(items: Array<{ currency: string; date: string }>): Observable<ExchangeRatesBatchResult> {
+    return this.http.post<ExchangeRatesBatchResult>('/api/exchange-rates/batch', { items });
+  }
+
+  checkStatement(items: Array<Record<string, unknown>>): Observable<StatementCheckResult> {
+    return this.http.post<StatementCheckResult>('/api/statements/check', { items });
+  }
+
+  importStatement(body: { fileSha256: string; fileName: string; skippedCount: number; items: Array<Record<string, unknown>> }): Observable<{ result: { imported: number; duplicates: number; skipped: number; potentialDuplicates: number; invalid: number; batchId: number } }> {
+    return this.http.post<{ result: { imported: number; duplicates: number; skipped: number; potentialDuplicates: number; invalid: number; batchId: number } }>('/api/statements/import', body);
+  }
+
+  getImportHistory(): Observable<Array<{ id: number; file_name: string; source_count: number; imported_count: number; duplicate_count: number; skipped_count: number; created_at: string }>> {
+    return this.http.get<Array<{ id: number; file_name: string; source_count: number; imported_count: number; duplicate_count: number; skipped_count: number; created_at: string }>>('/api/statements');
+  }
+
+  getPlanPreferences(): Observable<{ categories: PlanCategoryPreference[]; monthsUsed: number; currency: 'TRY' }> {
+    return this.http.get<{ categories: PlanCategoryPreference[]; monthsUsed: number; currency: 'TRY' }>('/api/plans/preferences');
+  }
+
+  savePlanPreferences(categories: Array<{ categoryId: number; protectedAmount: number; reductionRate: number }>): Observable<{ saved: number }> {
+    return this.http.put<{ saved: number }>('/api/plans/preferences', { categories });
+  }
+
+  getPlanScenarios(targetSavings: number): Observable<PlanScenarioPreview> {
+    return this.http.get<PlanScenarioPreview>(`/api/plans/scenarios?targetSavings=${targetSavings}`);
+  }
+
+  createPlan(body: { name: string; targetSavings: number; scenarioId: 'relaxed' | 'balanced' | 'aggressive' }): Observable<{ id: number; scenario: unknown; calculation: unknown }> {
+    return this.http.post<{ id: number; scenario: unknown; calculation: unknown }>('/api/plans', body);
+  }
+
+  getCurrentPlan(): Observable<{ plan: ActiveFinancialPlan | null }> {
+    return this.http.get<{ plan: ActiveFinancialPlan | null }>('/api/plans/current');
+  }
+
+  getPlanHistory(): Observable<Array<{ id: number; name: string; start_date: string; end_date: string; target_savings: number; status: string }>> {
+    return this.http.get<Array<{ id: number; name: string; start_date: string; end_date: string; target_savings: number; status: string }>>('/api/plans/history');
+  }
+
+  changePlanStatus(id: number, status: 'completed' | 'archived'): Observable<{ id: number; status: string }> {
+    return this.http.patch<{ id: number; status: string }>(`/api/plans/${id}/status`, { status });
+  }
+
+  getFinancialAnalysis(from: string, to: string): Observable<FinancialAnalysis> {
+    return this.http.get<FinancialAnalysis>(`/api/reports/analysis?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+  }
+
+  recordRecommendationFeedback(fingerprint: string, action: 'accepted' | 'rejected' | 'dismissed'): Observable<{ fingerprint: string; action: string }> {
+    return this.http.post<{ fingerprint: string; action: string }>(`/api/reports/recommendations/${fingerprint}/feedback`, { action });
+  }
+
   getRateHistory(id: number): Observable<ExchangeRateLog[]> {
     return this.http.get<ExchangeRateLog[]>(`/api/transactions/${id}/rate-history`);
   }
@@ -67,6 +135,10 @@ export class FinanceApiService {
 
   deleteTransaction(id: number): Observable<void> {
     return this.http.delete<void>(`/api/transactions/${id}`);
+  }
+
+  deleteTransactions(ids: number[]): Observable<{ deleted: number }> {
+    return this.http.delete<{ deleted: number }>('/api/transactions', { body: { ids } });
   }
 
   saveCategory(value: CategoryFormValue): Observable<Category> {
