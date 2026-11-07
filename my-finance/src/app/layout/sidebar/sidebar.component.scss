@@ -2,16 +2,15 @@
 .brand { display: flex; align-items: center; gap: 8px; margin: 0 0 42px 0; color: var(--ink); font-size: 1.25rem; font-weight: 740; letter-spacing: -.045em; text-decoration: none; }
 .brand small, .profile small { display: block; margin-top: 3px; color: var(--muted); font-size: .75rem; font-weight: 450; letter-spacing: 0; }
 .nav-label { margin: 0 0 12px; padding: 0 12px; color: var(--muted); font-size: .75rem; font-weight: 750; letter-spacing: .12em; }
-.sidebar nav { display: grid; gap: 6px; }
+.sidebar nav { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 6px; }
 .sidebar nav button { display: flex; min-height: 44px; align-items: center; gap: 12px; padding: 0 11px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: .875rem; font-weight: 550; text-align: left; transition: background-color .18s ease, color .18s ease; }
 .sidebar nav button:hover, .sidebar nav button.active { background: var(--accent-soft); color: var(--accent-strong); }
 .sidebar nav button.active { font-weight: 650; }
 .nav-icon { width: 20px; flex: 0 0 auto; font-size: 1.125rem; text-align: center; }
-.sidebar-bottom { margin-top: auto; }
-.support-card { margin: 0 2px 18px; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
-.support-orb { display: grid; width: 28px; height: 28px; place-items: center; margin-bottom: 12px; border-radius: 9px; background: var(--accent-soft); color: var(--accent); }
-.support-card strong { font-size: .875rem; }
-.support-card p { margin-top: 5px; font-size: .75rem; line-height: 1.55; }
+.sidebar-bottom { display: grid; gap: 12px; margin-top: auto; }
+.settings-link { display:flex; min-height:44px; align-items:center; gap:12px; padding:0 11px; border:0; border-radius:8px; background:transparent; color:var(--muted); cursor:pointer; font-size:.875rem; text-align:left; }
+.settings-link:hover,.settings-link.active { background:var(--accent-soft); color:var(--accent-strong); }
+.settings-link { margin-top: auto; }
 .profile { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 16px 3px 0; border-top: 1px solid var(--line); font-size: .8125rem; }
 .profile > div:nth-child(2) { min-width: 0; max-width: 145px; }
 .profile strong, .profile small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -21,8 +20,10 @@
 @media (max-width: 1050px) { .sidebar { width: 216px; } }
 @media (max-width: 640px) {
   .sidebar { inset: auto 0 0; width: 100%; height: 68px; padding: 5px 10px; border: 0; border-top: 1px solid var(--line); background: var(--surface); }
-  .brand, .nav-label, .sidebar-bottom { display: none; }
-  .sidebar nav { height: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+  .brand, .nav-label { display: none; }
+  .sidebar nav { height: 100%; flex: 0 0 auto; flex-direction:row; display:grid; grid-template-columns:repeat(8,minmax(58px,1fr)); gap:4px; overflow-x:auto; }
   .sidebar nav button { min-height: 56px; flex-direction: column; justify-content: center; gap: 2px; padding: 3px 2px; font-size: .75rem; }
   .nav-icon { font-size: 1rem; }
+  .sidebar-bottom { display:none; }
+  .settings-link { margin-top:0; }
 }

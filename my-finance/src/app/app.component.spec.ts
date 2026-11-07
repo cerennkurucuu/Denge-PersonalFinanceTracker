@@ -20,7 +20,7 @@ function flushPageReads(http: HttpTestingController): void {
     else if (request.request.url === '/api/transactions') request.flush([]);
     else if (request.request.url === '/api/dashboard/summary') request.flush({ balance: 0, income: 0, expense: 0, monthIncome: 0, monthExpense: 0, previousMonthIncome: 0, previousMonthExpense: 0, recent: [], categories: [] });
     else if (request.request.url.startsWith('/api/reports/monthly')) request.flush([]);
-    else if (request.request.url === '/api/settings') request.flush({ currency: 'TRY', theme: 'light', language: 'tr' });
+    else if (request.request.url === '/api/settings') request.flush({ currency: 'TRY', theme: 'light', language: 'tr', allowDuplicateImports: false });
     else request.flush({});
   });
 }
@@ -28,7 +28,7 @@ function initializeSignedIn(fixture: ComponentFixture<AppComponent>, http: HttpT
   fixture.detectChanges();
   http.expectOne('/api/auth/config').flush({ googleClientId: null });
   http.expectOne('/api/auth/me').flush({ user: { id: 1, email: 'ceren@example.com', name: 'Ceren Kurucu' } });
-  http.expectOne('/api/settings').flush({ currency: 'TRY', theme: 'light', language: 'tr' });
+  http.expectOne('/api/settings').flush({ currency: 'TRY', theme: 'light', language: 'tr', allowDuplicateImports: false });
   flushPageReads(http);
   fixture.detectChanges();
 }

@@ -1,5 +1,5 @@
 export type TransactionType = 'Income' | 'Expense';
-export type FinancePage = 'dashboard' | 'transactions' | 'reports' | 'categories';
+export type FinancePage = 'dashboard' | 'transactions' | 'plans' | 'cashflow' | 'calendar' | 'reports' | 'categories' | 'settings';
 
 export interface AuthUser {
   id: number;
@@ -64,6 +64,8 @@ export interface Settings {
   currency: string;
   theme: 'light' | 'dark';
   language: string;
+  allowDuplicateImports: boolean;
+  sessionTimeoutMinutes: number;
 }
 
 export interface TransactionFormValue {

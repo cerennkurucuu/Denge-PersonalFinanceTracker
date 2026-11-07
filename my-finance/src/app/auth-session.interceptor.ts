@@ -2,7 +2,7 @@ import { HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
 import { catchError, throwError } from 'rxjs';
 
 let redirectingForExpiredSession = false;
-const publicAuthEndpoints = ['/api/auth/config', '/api/auth/google', '/api/auth/me', '/api/auth/logout'];
+const publicAuthEndpoints = ['/api/auth/config', '/api/auth/google', '/api/auth/me', '/api/auth/logout', '/api/auth/mfa/verify'];
 
 export const authSessionInterceptor: HttpInterceptorFn = (request, next) => {
   const protectedRequest = request.url.startsWith('/api/') && !publicAuthEndpoints.includes(request.url);

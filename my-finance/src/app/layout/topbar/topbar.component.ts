@@ -20,6 +20,6 @@ export class TopbarComponent {
   @Output() signOut = new EventEmitter<void>();
 
   get pageTitle(): string {
-    return { dashboard: 'Genel Bakış', transactions: 'İşlemler', reports: 'Raporlar', categories: 'Kategoriler' }[this.active];
+    return { dashboard: 'Genel Bakış', transactions: 'İşlemler', plans: 'Planlarım', cashflow: 'Nakit Akışı', calendar: 'Finansal Takvim', reports: 'Raporlar', categories: 'Kategoriler', settings: 'Ayarlar' }[this.active];
   }
 }

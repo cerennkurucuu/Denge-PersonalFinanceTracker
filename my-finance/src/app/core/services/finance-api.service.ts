@@ -34,8 +34,32 @@ export class FinanceApiService {
     return this.http.get<{ user: AuthUser }>('/api/auth/me');
   }
 
-  signIn(credential: string): Observable<{ user: AuthUser }> {
-    return this.http.post<{ user: AuthUser }>('/api/auth/google', { credential });
+  signIn(credential: string): Observable<{ user?: AuthUser; mfaRequired?: boolean }> {
+    return this.http.post<{ user?: AuthUser; mfaRequired?: boolean }>('/api/auth/google', { credential });
+  }
+
+  verifyMfa(code: string): Observable<{ user: AuthUser }> {
+    return this.http.post<{ user: AuthUser }>('/api/auth/mfa/verify', { code });
+  }
+
+  touchSession():Observable<void> {
+    return this.http.post<void>('/api/auth/activity',{});
+  }
+
+  getMfaStatus(): Observable<{ enabled: boolean }> {
+    return this.http.get<{ enabled: boolean }>('/api/auth/mfa/status');
+  }
+
+  setupMfa(): Observable<{ secret: string; otpauthUri: string }> {
+    return this.http.post<{ secret: string; otpauthUri: string }>('/api/auth/mfa/setup', {});
+  }
+
+  enableMfa(code: string): Observable<{ enabled: boolean; recoveryCodes:string[] }> {
+    return this.http.post<{ enabled: boolean; recoveryCodes:string[] }>('/api/auth/mfa/enable', { code });
+  }
+
+  disableMfa(code: string): Observable<{ enabled: boolean }> {
+    return this.http.post<{ enabled: boolean }>('/api/auth/mfa/disable', { code });
   }
 
   signOut(): Observable<void> {
@@ -120,6 +144,10 @@ export class FinanceApiService {
 
   getMonthlyReport(year: number): Observable<MonthlyReport[]> {
     return this.http.get<MonthlyReport[]>(`/api/reports/monthly?year=${year}`);
+  }
+
+  getReportTotal(type: 'Income' | 'Expense', from: string, to: string): Observable<{ amount: number; issues: number }> {
+    return this.http.get<{amount:number;issues:number}>('/api/reports/totals', {params:{type,from,to}});
   }
 
   getSettings(): Observable<Settings> {

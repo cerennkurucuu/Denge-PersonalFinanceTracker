@@ -2,6 +2,7 @@ import { Injectable, inject } from '@angular/core';
 import { Category, CategoryFormValue, DashboardSummary, DeletePrompt, ExchangeRateLog, MonthlyReport, Transaction, TransactionFormValue, TransactionType } from '../models/finance.models';
 import { FinanceApiService } from './finance-api.service';
 import { FinanceFormatService } from './finance-format.service';
+import { AuthService } from './auth.service';
 
 const emptySummary: DashboardSummary = {
   balance: 0, income: 0, expense: 0, monthIncome: 0, monthExpense: 0,
@@ -12,6 +13,7 @@ const emptySummary: DashboardSummary = {
 export class FinanceStoreService {
   private readonly api = inject(FinanceApiService);
   private readonly format = inject(FinanceFormatService);
+  private readonly auth = inject(AuthService);
 
   summary: DashboardSummary = { ...emptySummary };
   transactions: Transaction[] = [];
@@ -22,6 +24,9 @@ export class FinanceStoreService {
   notice = '';
   modalError = '';
   dark = false;
+  allowDuplicateImports = false;
+  settingsSaving = false;
+  sessionTimeoutMinutes=10;
   transactionModal = false;
   categoryModal = false;
   editingTransactionId: number | null = null;
@@ -165,11 +170,17 @@ export class FinanceStoreService {
     });
     this.api.getDashboardSummary().subscribe({
       next: summary => this.summary = summary,
-      error: () => this.error = 'Özet bilgisi alınamadı.',
+      error: response => this.error = response.error?.error || 'Özet bilgisi alınamadı.',
     });
     this.loadMonthly();
     this.api.getSettings().subscribe({
-      next: settings => { this.dark = settings.theme === 'dark'; this.applyTheme(); },
+      next: settings => {
+        this.dark = settings.theme === 'dark';
+        this.allowDuplicateImports = settings.allowDuplicateImports === true;
+        this.sessionTimeoutMinutes=Number.isInteger(settings.sessionTimeoutMinutes)&&settings.sessionTimeoutMinutes>=1&&settings.sessionTimeoutMinutes<=480?settings.sessionTimeoutMinutes:10;
+        this.auth.updateIdleTimeout(this.sessionTimeoutMinutes);
+        this.applyTheme();
+      },
     });
   }
 
@@ -182,6 +193,9 @@ export class FinanceStoreService {
     this.error = '';
     this.notice = '';
     this.modalError = '';
+    this.allowDuplicateImports = false;
+    this.sessionTimeoutMinutes=10;
+    this.settingsSaving = false;
     this.transactionModal = false;
     this.categoryModal = false;
     this.deletePrompt = null;
@@ -387,6 +401,38 @@ export class FinanceStoreService {
         this.applyTheme();
         this.error = response.error?.error || 'Tema tercihi kaydedilemedi. Yeniden deneyin.';
       },
+    });
+  }
+
+  setAllowDuplicateImports(allow: boolean): void {
+    if (this.settingsSaving || allow === this.allowDuplicateImports) return;
+    const previous = this.allowDuplicateImports;
+    this.allowDuplicateImports = allow;
+    this.settingsSaving = true;
+    this.error = '';
+    this.api.updateSettings({ allowDuplicateImports: allow }).subscribe({
+      next: settings => {
+        this.allowDuplicateImports = settings.allowDuplicateImports === true;
+        this.notice = this.allowDuplicateImports
+          ? 'Mükerrer işlemlerin içe aktarılmasına izin verildi.'
+          : 'Mükerrer işlemlerin içe aktarılması engellendi.';
+        this.settingsSaving = false;
+      },
+      error: response => {
+        this.allowDuplicateImports = previous;
+        this.error = response.error?.error || 'İçe aktarma tercihi kaydedilemedi. Yeniden deneyin.';
+        this.settingsSaving = false;
+      },
+    });
+  }
+
+  setSessionTimeoutMinutes(minutes:number):void {
+    if(this.settingsSaving||!Number.isInteger(minutes)||minutes<1||minutes>480||minutes===this.sessionTimeoutMinutes)return;
+    const previous=this.sessionTimeoutMinutes;
+    this.sessionTimeoutMinutes=minutes;this.settingsSaving=true;this.auth.updateIdleTimeout(minutes);
+    this.api.updateSettings({sessionTimeoutMinutes:minutes}).subscribe({
+      next:settings=>{this.settingsSaving=false;this.sessionTimeoutMinutes=settings.sessionTimeoutMinutes;this.auth.updateIdleTimeout(this.sessionTimeoutMinutes);this.notice='Oturum zaman aşımı tercihi kaydedildi.';},
+      error:response=>{this.settingsSaving=false;this.sessionTimeoutMinutes=previous;this.auth.updateIdleTimeout(previous);this.error=response.error?.error||'Oturum süresi ayarı kaydedilemedi.';},
     });
   }
 

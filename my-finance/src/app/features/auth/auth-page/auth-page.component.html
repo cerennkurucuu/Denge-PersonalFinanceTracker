@@ -12,7 +12,14 @@
       <div class="eyebrow">KİŞİSEL FİNANSIN, SENİN KONTROLÜNDE</div>
       <h1>Denge’ye hoş geldin</h1>
       <p class="auth-description">Finansal kayıtların yalnızca Google hesabınla giriş yaptığında sana özel açılır.</p>
-      @if (auth.googleClientId) {
+      @if (auth.mfaChallengeRequired) {
+        <form class="mfa-form" (submit)="$event.preventDefault(); verifyMfa()">
+          <label for="login-mfa-code">Doğrulama kodu</label>
+          <p>Google Authenticator kodunu veya tek kullanımlık yedek kodlardan birini girin.</p>
+          <input id="login-mfa-code" name="mfaCode" type="text" autocomplete="one-time-code" maxlength="24" required [(ngModel)]="mfaCode" />
+          <button class="primary-button" type="submit" [disabled]="mfaCode.trim().length<6 || mfaSubmitting">{{ mfaSubmitting ? 'Doğrulanıyor…' : 'Doğrula ve giriş yap' }}</button>
+        </form>
+      } @else if (auth.googleClientId) {
         <div #googleButton class="google-button"></div>
       } @else {
         <div class="auth-config-note">Google girişi henüz yapılandırılmadı. Sunucuya Google OAuth Web Client ID eklendiğinde giriş açılacak.</div>

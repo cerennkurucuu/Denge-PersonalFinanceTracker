@@ -1,0 +1,77 @@
+<section class="welcome-row">
+  <div>
+    <div class="eyebrow">TERCİHLERİN</div>
+    <h1>Ayarlar</h1>
+    <p>Veri içe aktarma davranışını ve hesap güvenliği tercihlerini yönet.</p>
+  </div>
+</section>
+
+<section class="panel settings-panel" aria-labelledby="session-timeout-title">
+  <div class="setting-copy">
+    <span class="setting-kicker">OTURUM GÜVENLİĞİ</span>
+    <h2 id="session-timeout-title">Hareketsizlikte otomatik çıkış</h2>
+    <p>Belirlediğin süre boyunca işlem yapmazsan bu cihazdaki oturum kapatılır. Varsayılan süre 10 dakikadır. 1–480 dakika arasında seçim yapabilirsin; güvenlik için ihtiyacın olan en kısa süreyi seç.</p>
+    <p class="setting-state" role="status">Şu anki süre: {{ finance.sessionTimeoutMinutes }} dakika. Süre dolunca oturum sunucuda da geçersiz kılınır.</p>
+  </div>
+  <label class="timeout-control" for="session-timeout">Oturum süresi
+    <div class="timeout-input"><input id="session-timeout" type="number" min="1" max="480" step="1" [value]="finance.sessionTimeoutMinutes" [disabled]="finance.settingsSaving" (change)="setSessionTimeout($any($event.target).value)" /><span>dakika</span></div>
+  </label>
+</section>
+
+<section class="panel settings-panel mfa-panel" aria-labelledby="mfa-title">
+  <div class="setting-copy">
+    <span class="setting-kicker">HESAP KORUMASI</span>
+    <h2 id="mfa-title">İki adımlı doğrulama</h2>
+    <p>Google Authenticator veya TOTP destekleyen başka bir uygulamayla giriş kodu iste. Bu, Google hesabının 2FA ayarını değiştirmez; Denge hesabına ek bir koruma katmanı ekler.</p>
+    @if (mfaEnabled) {
+      <p class="setting-state">Durum: etkin. Google ile girişten sonra doğrulama kodu istenir.</p>
+      @if (recoveryCodes.length) {
+        <div class="recovery-codes" role="status"><strong>Yedek giriş kodları — şimdi güvenli biçimde sakla</strong><p>Her kod bir kez kullanılabilir. Kodlar daha sonra tekrar gösterilmeyecek.</p><code>{{ recoveryCodes.join('  ·  ') }}</code></div>
+      }
+      <label class="mfa-code-control" for="mfa-disable-code">Kapatmak için Authenticator veya yedek kod</label>
+      <input id="mfa-disable-code" class="mfa-code-input" type="text" autocomplete="one-time-code" maxlength="24" [value]="mfaCode" (input)="mfaCode=$any($event.target).value" />
+      <button class="secondary-button" type="button" [disabled]="mfaBusy || mfaCode.length<6" (click)="disableMfa()">{{ mfaBusy ? 'İşleniyor…' : 'İki adımlı doğrulamayı kapat' }}</button>
+    } @else if (mfaSecret) {
+      <div class="mfa-setup" role="group" aria-label="Authenticator kurulumu">
+        <strong>1. Bu anahtarı doğrulama uygulamasına ekle</strong>
+        <code class="mfa-secret">{{ mfaSecret }}</code>
+        <p>Uygulamada hesap ekle → kurulum anahtarını gir seçeneğini kullan. Anahtarı kimseyle paylaşma; kurulum tamamlanınca ekrandan kaldırılır.</p>
+        <label class="mfa-code-control" for="mfa-confirm-code">2. Uygulamadaki 6 haneli kod</label>
+        <input id="mfa-confirm-code" class="mfa-code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" [value]="mfaCode" (input)="mfaCode=$any($event.target).value" />
+        <button class="primary-button" type="button" [disabled]="mfaBusy || mfaCode.length!==6" (click)="confirmMfaSetup()">{{ mfaBusy ? 'Doğrulanıyor…' : 'Kodu doğrula ve etkinleştir' }}</button>
+      </div>
+    } @else {
+      <p class="setting-state">Durum: kapalı</p>
+      <button class="primary-button" type="button" [disabled]="mfaBusy" (click)="beginMfaSetup()">{{ mfaBusy ? 'Hazırlanıyor…' : 'Authenticator uygulamasını kur' }}</button>
+    }
+    @if (mfaMessage) { <p class="mfa-message" role="status">{{ mfaMessage }}</p> }
+    @if (mfaError) { <p class="mfa-error" role="alert">{{ mfaError }}</p> }
+    @if (mfaUri) { <span class="sr-only">Kurulum bağlantısı hazır; anahtarı uygulamaya elle gir.</span> }
+  </div>
+</section>
+
+<section class="panel settings-panel" aria-labelledby="import-safety-title">
+  <div class="setting-copy">
+    <span class="setting-kicker">İÇE AKTARMA GÜVENLİĞİ</span>
+    <h2 id="import-safety-title">Mükerrer işlemlere izin ver</h2>
+    <p>Kapalıyken mevcut işlemlerle aynı olan kesin eşleşmeler tekrar eklenmez. Silmiş olduğun bir işlemi, ekstre dosyasını yeniden seçerek tekrar aktarabilirsin.</p>
+    <div class="match-explanation">
+      <strong>Mükerrer eşleşmesi nasıl yapılır?</strong>
+      <p>Kesin eşleşmede işlem tarihi, yönü, para birimi, orijinal tutar, normalize edilmiş işyeri/açıklama ve varsa referans birlikte karşılaştırılır. Olası eşleşmede tarih, yön, para birimi ve tutar aynı; işyeri veya açıklama benzer olmalıdır. Olası eşleşmeler kapalı ayarda kullanıcı onayı olmadan eklenmez.</p>
+    </div>
+    <p class="setting-state" role="status">
+      {{ finance.allowDuplicateImports ? 'Açık: aynı görünen işlemler de ayrı kayıt olarak eklenebilir.' : 'Kapalı: mevcut işlemler korunur; silinmiş işlemler yeniden aktarılabilir.' }}
+    </p>
+  </div>
+
+  <button
+    class="toggle-switch"
+    type="button"
+    role="switch"
+    aria-label="Mükerrer işlemleri içe aktar"
+    [attr.aria-checked]="finance.allowDuplicateImports"
+    [disabled]="finance.settingsSaving"
+    (click)="toggleDuplicateImports()">
+    <span aria-hidden="true"></span>
+  </button>
+</section>

@@ -1,5 +1,5 @@
 import { NgZone, Injectable, inject } from '@angular/core';
-import { catchError, finalize, forkJoin, map, Observable, of, tap } from 'rxjs';
+import { catchError, finalize, forkJoin, map, Observable, of, Subject, tap } from 'rxjs';
 import { AuthUser } from '../models/finance.models';
 import { FinanceApiService } from './finance-api.service';
 
@@ -23,8 +23,17 @@ export class AuthService {
   loading = true;
   error = '';
   googleClientId: string | null = null;
+  mfaChallengeRequired = false;
+  readonly sessionExpired$ = new Subject<void>();
   private googleScriptLoading = false;
   private googleRenderedFor = '';
+  private idleTimeoutMinutes=10;
+  private idleTimer:ReturnType<typeof setTimeout>|null=null;
+  private lastActivityAt=0;
+  private lastActivitySyncAt=0;
+  private sessionActive=false;
+  private readonly onActivity=()=>{if(this.sessionActive){this.lastActivityAt=Date.now();this.scheduleIdleTimeout();if(Date.now()-this.lastActivitySyncAt>=60_000){this.lastActivitySyncAt=Date.now();this.api.touchSession().subscribe({error:()=>undefined});}}};
+  private readonly onVisibility=()=>{if(this.sessionActive&&document.visibilityState==='visible')this.checkIdleTimeout();};
 
   initialize(): Observable<AuthUser | null> {
     this.loading = true;
@@ -66,18 +75,65 @@ export class AuthService {
     document.head.appendChild(script);
   }
 
-  signInWithGoogle(credential: string): Observable<AuthUser> {
+  signInWithGoogle(credential: string): Observable<{ user?: AuthUser; mfaRequired?: boolean }> {
     this.error = '';
     return this.api.signIn(credential).pipe(
-      map(response => response.user),
       tap({ error: response => this.error = response.status === 0
         ? 'Giriş sunucusuna ulaşılamadı. Uygulamayı npm start ile açıp sayfayı yenileyin.'
         : response.error?.error || 'Google ile giriş yapılamadı.' }),
     );
   }
 
+  verifyMfa(code:string):Observable<AuthUser> {
+    this.error='';
+    return this.api.verifyMfa(code).pipe(
+      map(response=>response.user),
+      tap({error:response=>this.error=response.error?.error||'İki adımlı doğrulama yapılamadı.'}),
+      tap(()=>{this.mfaChallengeRequired=false;}),
+    );
+  }
+
   signOut(): Observable<void> {
-    return this.api.signOut();
+    return this.api.signOut().pipe(tap(()=>this.endSession()));
+  }
+
+  startSession(timeoutMinutes:number):void {
+    this.endSession();
+    this.sessionActive=true;
+    this.idleTimeoutMinutes=this.validIdleTimeout(timeoutMinutes);
+    this.lastActivityAt=Date.now();
+    this.lastActivitySyncAt=this.lastActivityAt;
+    for(const event of ['pointerdown','keydown','touchstart','scroll'])window.addEventListener(event,this.onActivity,{passive:true});
+    document.addEventListener('visibilitychange',this.onVisibility);
+    this.scheduleIdleTimeout();
+  }
+
+  updateIdleTimeout(timeoutMinutes:number):void {
+    this.idleTimeoutMinutes=this.validIdleTimeout(timeoutMinutes);
+    if(this.sessionActive)this.scheduleIdleTimeout();
+  }
+
+  endSession():void {
+    this.sessionActive=false;
+    if(this.idleTimer)clearTimeout(this.idleTimer);
+    this.idleTimer=null;
+    for(const event of ['pointerdown','keydown','touchstart','scroll'])window.removeEventListener(event,this.onActivity);
+    document.removeEventListener('visibilitychange',this.onVisibility);
+  }
+
+  private validIdleTimeout(value:number):number {return Number.isInteger(value)&&value>=1&&value<=480?value:10;}
+  private scheduleIdleTimeout():void {
+    if(this.idleTimer)clearTimeout(this.idleTimer);
+    this.idleTimer=setTimeout(()=>this.checkIdleTimeout(),Math.max(0,this.idleTimeoutMinutes*60_000-(Date.now()-this.lastActivityAt)));
+  }
+  private checkIdleTimeout():void {
+    if(!this.sessionActive)return;
+    const remaining=this.idleTimeoutMinutes*60_000-(Date.now()-this.lastActivityAt);
+    if(remaining>0){this.scheduleIdleTimeout();return;}
+    this.endSession();
+    this.error='Hareketsizlik nedeniyle oturum kapatıldı. Devam etmek için Google hesabınla yeniden giriş yap.';
+    this.api.signOut().subscribe({error:()=>undefined});
+    this.sessionExpired$.next();
   }
 
   resetGoogleButton(): void {
