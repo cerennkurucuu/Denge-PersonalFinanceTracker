@@ -13,6 +13,8 @@ Denge, Türkçe arayüzlü bir kişisel finans takip uygulamasıdır. Gelir ve g
 - Segoe UI Variable tabanlı tipografi ve Denge sonsuzluk logosu; üçüncü taraf font isteği gönderilmez
 - Kalıcı MySQL depolama ve API doğrulaması
 - Google hesabıyla giriş ve hesaplar arasında kullanıcıya özel veri ayrımı
+- Varsayılan 10 dakikalık hareketsizlikte otomatik oturum kapatma; kullanıcı ayarından 10 dakika–8 saat arası seçim ve sunucu tarafında bağımsız süre kontrolü
+- Google Authenticator uyumlu isteğe bağlı iki adımlı giriş, şifreli TOTP anahtarı ve tek kullanımlık kurtarma kodları
 - TCMB efektif alış kuruyla dövizli işlem kaydı, elle kur düzeltme ve kur geçmişi
 - Dövizli işlemlerde orijinal tutar ile raporlarda kullanılan TL karşılığının birlikte gösterimi
 - CSV, XLS, XLSX ve metin tabanlı PDF ekstreleri için tarayıcıda önizleme, doğrulama ve seçmeli içe aktarma
@@ -66,6 +68,8 @@ Bu sürüm SQLite kullanmaz. Önceden oluşmuş yerel SQLite dosyası varsa sili
 
 Google ID token’ı sunucuda imza, issuer, audience ve süre kontrollerinden geçmeden kullanıcı oturumu açılmaz. Oturum cookie’si `HttpOnly`, `SameSite=Lax` ve production’da `Secure` olur. Giriş yapılmadan finans API’leri 401 döndürür. Yeni hesaplar kendi varsayılan kategori ve ayarlarını alır; kullanıcılar başka hesapların işlemlerini, kategorilerini, raporlarını veya ayarlarını okuyamaz.
 
+Yerel Authenticator MFA anahtarı için `.env` dosyası oluşturduktan sonra `npm run security:setup` çalıştır; benzersiz anahtar yalnızca Git dışındaki `.env` dosyasına yazılır. Production’da `MFA_ENCRYPTION_KEY` değerini secret manager içinde ayrıca üretip sakla. Ayarlar ekranından Google Authenticator uyumlu iki adımlı doğrulamayı açabilirsin. Kurtarma kodları yalnızca kurulum sırasında bir kez gösterilir; güvenli biçimde sakla. Hareketsizlik süresi varsayılan 10 dakikadır ve Ayarlar’dan 1 dakika ile 8 saat arasında değiştirilebilir; sunucu da süreyi ayrıca uygular. Cloudflare Tunnel kurulumu ve güvenli dağıtım kontrol listesi için [`docs/SECURITY.md`](docs/SECURITY.md) dosyasına bak.
+
 `001-initial.sql` temel şemayı, `002-currency-transactions.sql` TRY varsayılanlı kur alanları ve kur denetim geçmişini, `003-tenant-foreign-keys.sql` ise işlem, kategori ve kur geçmişi arasında aynı kullanıcıya ait olmayı veritabanı foreign key’leriyle güvenceye alır. Migration kayıtları `schema_migrations` tablosunda tutulur; kolon, index ve kısıt adımları sürüm kaydı yazılmadan önce bağlantı kesilse bile yeniden çalıştırılabilir. Mevcut işlemler `amount` değeri korunarak TRY olarak işaretlenir; eski veriler silinmez.
 
 TCMB efektif alış kurlarını iş günlerinde 15.30’da ilan eder; hafta sonu ve resmî tatillerde yeni kur belirlemez. Kur tarihli bir işlem için API önceki iş gününün yayınını kullanır ve arşivde hafta sonlarını atlayarak geriye gider. Dashboard’daki kur tablosu en son yayınlanan değeri ve yayın tarihini gösterir. Canlı kur için API sunucusunun `www.tcmb.gov.tr` adresine dış HTTPS bağlantısı açık olmalıdır. Erişim yoksa kur alanı boş kalır ve kullanıcıya elle giriş seçeneği gösterilir. TCMB bu gösterge kurlarının özel kişiler arasındaki işlemlerde uygulanacak fiyatı belirlemediğini bildirir; uygulamadaki kur elle düzeltilebilir.
@@ -76,6 +80,12 @@ TCMB efektif alış kurlarını iş günlerinde 15.30’da ilan eder; hafta sonu
 | --- | --- | --- |
 | GET | `/api/auth/config` | Google istemci kimliği yapılandırma durumu (public) |
 | POST | `/api/auth/google` | Google ID token’ını doğrula ve oturum aç |
+| POST | `/api/auth/mfa/verify` | MFA etkin hesaba TOTP veya tek kullanımlık kurtarma koduyla giriş yap |
+| GET | `/api/auth/mfa/status` | İki adımlı doğrulama durumu |
+| POST | `/api/auth/mfa/setup` | Şifreli kayıt için Authenticator kurulum anahtarı üret |
+| POST | `/api/auth/mfa/enable` | Authenticator koduyla etkinleştir ve kurtarma kodlarını bir kez al |
+| POST | `/api/auth/mfa/disable` | Authenticator veya kurtarma koduyla kapat |
+| POST | `/api/auth/activity` | Etkin kullanıcı oturumu için zaman aşımını yenile |
 | GET | `/api/auth/me` | Oturum açmış kullanıcı (kimlik doğrulama gerekli) |
 | POST | `/api/auth/logout` | Oturumu kapat |
 | GET, POST | `/api/transactions` | İşlemleri listele veya ekle; `from`, `to`, `type` filtreleri kullanılabilir |
@@ -104,7 +114,7 @@ TCMB efektif alış kurlarını iş günlerinde 15.30’da ilan eder; hafta sonu
 | GET | `/api/plans/current` | Etkin plan, kalan kategori bütçesi ve ilerleme |
 | GET | `/api/plans/history` | Önceki planlar |
 | PATCH | `/api/plans/:id/status` | Kullanıcıya ait planı tamamla veya arşivle |
-| GET, PUT | `/api/settings` | Para birimi, tema ve dil ayarları |
+| GET, PUT | `/api/settings` | Para birimi, tema, dil, mükerrer içe aktarma tercihi ve hareketsizlik süresi |
 
 Ekstre aktarımında CSV, XLS ve XLSX dosyaları ile metin katmanı bulunan PDF dosyaları desteklenir; dosya boyutu en fazla 10 MB, işlem satırı en fazla 1000 ve PDF en fazla 100 sayfa olabilir. Taranmış/görüntü tabanlı PDF veya yeterli doğrulukta çözümlenemeyen banka düzeni reddedilir; önizlemede yönü/kategorisi belirsiz satır için kullanıcı onayı gerekir. Transfer ve kredi kartı borç ödemesi tüketim gideri olarak içe alınmaz; iadeler `entry_kind=refund` ile saklanıp giderlerden düşülür. Dosyalar yüklenmez veya arşivlenmez.
 
@@ -200,3 +210,11 @@ my-finance/
 ```
 
 Her sayfa ve form klasörü kendi `*.component.ts`, `*.component.html` ve `*.component.scss` dosyalarını içerir. Böylece bir ekranı değiştirmek için tüm uygulamanın tek HTML/SCSS dosyasını aramak gerekmez. `FinanceStoreService` ekranların işlem durumunu ve CRUD akışlarını; `FinanceApiService` HTTP erişimini; `FinanceFormatService` TRY, tarih ve kuruş dönüşümünü; `FinanceChartService` Chart.js yaşam döngüsünü; `AuthService` oturum akışını yönetir. `AppComponent` yalnızca oturum ve aktif sayfa koordinasyonunu yapar.
+
+## Doğruluk ve yüksek hacimli aktarım
+
+[Performans ve veri doğruluğu kuralları](docs/PERFORMANCE.md) yeni geliştirmelerde esas alınır. İçe aktarma 10.000 satır destekler; önizleme 50 satırla sayfalanır. Gelir ve gider toplamları ayrı yeniden hesaplanabilir. Tarihin tutar olarak okunmuş olabileceği eski kayıtlarda raporlar uyarıyla durur; kayıtlar otomatik silinmez. `GET /api/reports/totals?type=Income&from=2026-01-01&to=2026-11-06` yalnızca seçilen işlem türünü hesaplar.
+
+## Finansal takvim ve nakit akışı
+
+Takvim menüsü; maaş, kira, fatura, kredi/kart ödemesi, abonelik, planlanan gelir-gider ve birikim ayırmayı günlük/haftalık/aylık/yıllık tekrarlarla takip eder. Gerçekleşmeler mevcut işlemlere bağlanır; ikinci bir gider yaratılmaz. 7/30/90 günlük nakit akışı, ay sonu kullanılabilir tutarı, yaklaşan ödemeler ve nakit yetersizliği uyarıları sunulur. Yetersiz geçmişte tahmini bakiye üretilmez. [Hesaplama kuralları, API ve testler](docs/CALENDAR.md).
