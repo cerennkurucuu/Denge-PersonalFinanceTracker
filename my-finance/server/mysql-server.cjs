@@ -7,6 +7,7 @@ const { verifyGoogleIdToken } = require('./google-id-token.cjs');
 const { isTrustedOrigin, normalizeAppOrigin, parseTrustedProxyHops, validateProductionConfiguration } = require('./security-config.cjs');
 const { normalizeMerchant, guessCategory } = require('./merchant-category-rules.cjs');
 const { buildFinancialPlan, analyzeSpending } = require('./finance-engine.cjs');
+const { createTotpSecret, findTotpCounter, verifyTotp, encryptSecret, decryptSecret, provisioningUri, createRecoveryCodes, hashRecoveryCode } = require('./totp.cjs');
 
 const production = process.env.NODE_ENV === 'production';
 const appOrigin = normalizeAppOrigin(process.env.APP_ORIGIN, { production });
@@ -38,7 +39,7 @@ app.use((_req, res, next) => {
   }
   next();
 });
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '12mb' }));
 
 const mysqlOptions = {
   host: process.env.MYSQL_HOST,
@@ -73,10 +74,13 @@ const defaults = [
 const categoryIcons = new Set(['circle', 'basket', 'car', 'bolt', 'heart', 'bag', 'sparkles', 'book', 'restaurant', 'home', 'briefcase', 'plus', 'laptop', 'chart', 'paw']);
 const googleClientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
 const sessionCookieName = 'denge_session';
+const mfaChallengeCookieName = 'denge_mfa_challenge';
 // Keep the authenticated browser session across app/server restarts for 30 days.
 const sessionLifetimeSeconds = 30 * 24 * 60 * 60;
 const hashSession = token => crypto.createHash('sha256').update(token).digest('hex');
 const cookieOptions = { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: sessionLifetimeSeconds * 1000 };
+const mfaChallengeCookieOptions = { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', path: '/api/auth/mfa/verify', maxAge: 5 * 60 * 1000 };
+const mfaEncryptionKey = (process.env.MFA_ENCRYPTION_KEY || '').trim();
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const transactionSelect = `SELECT t.id,t.type,t.amount,t.original_amount,t.currency_code,t.exchange_rate,t.tcmb_rate,t.rate_source,t.rate_effective_date,t.entry_kind,t.merchant_name,t.description,t.category_id,t.transaction_date,t.created_at,t.updated_at,c.name AS category,c.color AS category_color,c.icon AS category_icon FROM transactions t JOIN categories c ON c.id=t.category_id AND c.user_id=t.user_id`;
 const fail = (res, status, message) => res.status(status).json({ error: message });
@@ -146,6 +150,15 @@ async function isAppliedMigrationStep(statement, error) {
     ));
   }
 
+  const droppedIndex = /^ALTER\s+TABLE\s+`?[a-z0-9_]+`?\s+DROP\s+(?:KEY|INDEX)\s+`?([a-z0-9_]+)`?/i.exec(statement)?.[1];
+  if (droppedIndex) {
+    const exists = await get(
+      'SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND INDEX_NAME=?',
+      [table, droppedIndex],
+    );
+    return !exists;
+  }
+
   const addedConstraint = /^ALTER\s+TABLE\s+`?[a-z0-9_]+`?\s+ADD\s+CONSTRAINT\s+`?([a-z0-9_]+)`?/i.exec(statement)?.[1];
   const droppedConstraint = /^ALTER\s+TABLE\s+`?[a-z0-9_]+`?\s+DROP\s+FOREIGN\s+KEY\s+`?([a-z0-9_]+)`?/i.exec(statement)?.[1];
   const constraint = addedConstraint || droppedConstraint;
@@ -191,18 +204,45 @@ async function requireAuthentication(req, res, next) {
   const token = cookieValue(req, sessionCookieName);
   if (!token || token.length > 128) return fail(res, 401, 'Devam etmek için Google hesabınla giriş yap.');
   try {
-    const session = await get('SELECT u.id,u.google_sub,u.email,u.name,s.expires_at FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?', [hashSession(token)]);
-    if (!session || Number(session.expires_at) <= Math.floor(Date.now() / 1000)) {
+    const session = await get('SELECT u.id,u.google_sub,u.email,u.name,s.expires_at,s.last_activity_at,COALESCE(st.session_timeout_minutes,10) session_timeout_minutes FROM auth_sessions s JOIN users u ON u.id=s.user_id LEFT JOIN settings st ON st.user_id=u.id WHERE s.token_hash=?', [hashSession(token)]);
+    const now=Math.floor(Date.now()/1000);
+    const idleLimit=Number(session?.session_timeout_minutes||10)*60;
+    const storedLastActivityAt=Number(session?.last_activity_at||0);
+    const lastActivityAt=storedLastActivityAt>0?storedLastActivityAt:now;
+    if (!session || Number(session.expires_at) <= now || (lastActivityAt>0&&now-lastActivityAt >= idleLimit)) {
       if (session) await run('DELETE FROM auth_sessions WHERE token_hash=?', [hashSession(token)]);
       res.clearCookie(sessionCookieName, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' });
-      return fail(res, 401, 'Oturum süresi dolmuş. Yeniden giriş yap.');
+      return fail(res, 401, 'Oturum süresi doldu. Güvenliğiniz için yeniden giriş yapın.');
     }
+    if(storedLastActivityAt===0||now-storedLastActivityAt>=60) await run('UPDATE auth_sessions SET last_activity_at=? WHERE token_hash=? AND last_activity_at=?',[now,hashSession(token),storedLastActivityAt]);
     req.user = { id: Number(session.id), googleSub: session.google_sub, email: session.email, name: session.name };
     return next();
   } catch (error) { return next(error); }
 }
 
-async function validateTransaction(body, userId) {
+const requestBuckets=new Map();
+function limitRequests({name,max,windowMs,keyFor}) {
+  return (req,res,next)=>{
+    const now=Date.now(),key=name+':'+keyFor(req);
+    let bucket=requestBuckets.get(key);
+    if(!bucket||bucket.expiresAt<=now){
+      if(bucket)requestBuckets.delete(key);
+      if(requestBuckets.size>=10000){for(const [id,item] of requestBuckets)if(item.expiresAt<=now)requestBuckets.delete(id);if(requestBuckets.size>=10000)return fail(res,429,'Sunucu geçici olarak yoğun. Biraz sonra tekrar deneyin.');}
+      bucket={count:0,expiresAt:now+windowMs};requestBuckets.set(key,bucket);
+    }
+    if(bucket.count>=max){res.setHeader('Retry-After',String(Math.max(1,Math.ceil((bucket.expiresAt-now)/1000))));return fail(res,429,'İstek sınırına ulaşıldı. Biraz bekleyip yeniden deneyin.');}
+    bucket.count++;
+    return next();
+  };
+}
+const limitPublicRequest=limitRequests({name:'public',max:120,windowMs:60_000,keyFor:req=>req.ip||req.socket.remoteAddress||'unknown'});
+const limitAuthenticatedRequest=limitRequests({name:'user',max:900,windowMs:5*60_000,keyFor:req=>String(req.user.id)});
+const limitStatementPreview=limitRequests({name:'preview',max:12,windowMs:10*60_000,keyFor:req=>String(req.user.id)});
+const limitStatementImport=limitRequests({name:'import',max:6,windowMs:10*60_000,keyFor:req=>String(req.user.id)});
+const limitMfaVerification=limitRequests({name:'mfa',max:10,windowMs:10*60_000,keyFor:req=>req.ip||req.socket.remoteAddress||'unknown'});
+const limitMfaManagement=limitRequests({name:'mfa-management',max:5,windowMs:60*60_000,keyFor:req=>String(req.user.id)});
+
+async function validateTransaction(body, userId, categoryTypes) {
   if (!body || !['Income', 'Expense'].includes(body.type)) return 'İşlem türü Income veya Expense olmalı.';
   if (!isValidDate(body.transaction_date)) return 'Tarih YYYY-MM-DD biçiminde geçerli olmalı.';
   if (!Number.isSafeInteger(body.amount) || body.amount <= 0 || !Number.isSafeInteger(body.original_amount) || body.original_amount <= 0) return 'Tutar pozitif kuruş cinsinden tam sayı olmalı.';
@@ -220,7 +260,7 @@ async function validateTransaction(body, userId) {
   }
   if (calculateTryMinor(body.original_amount, body.exchange_rate, body.currency_code) !== body.amount) return 'TL karşılığı, tutar ve kura göre hesaplanan değerle eşleşmiyor.';
   if (typeof body.description !== 'string' || !body.description.trim() || body.description.length > 140) return 'Açıklama 1-140 karakter olmalı.';
-  if (!Number.isInteger(body.category_id) || !await get('SELECT id FROM categories WHERE id=? AND user_id=? AND type=?', [body.category_id, userId, body.type])) return 'Geçersiz kategori.';
+  if (!Number.isInteger(body.category_id) || !(categoryTypes ? categoryTypes.get(body.category_id) === body.type : await get('SELECT id FROM categories WHERE id=? AND user_id=? AND type=?', [body.category_id, userId, body.type]))) return 'Geçersiz kategori.';
   return null;
 }
 
@@ -392,7 +432,7 @@ function limitExchangeRateRequests(req, res, next) {
   return next();
 }
 
-app.get('/api/health', route(async (_req, res) => {
+app.get('/api/health', limitPublicRequest, route(async (_req, res) => {
   try {
     await db.query('SELECT 1');
     return res.json({ status: 'ok', database: 'mysql' });
@@ -400,7 +440,7 @@ app.get('/api/health', route(async (_req, res) => {
     return res.status(503).json({ status: 'unavailable', database: 'unavailable' });
   }
 }));
-app.get('/api/auth/config', (_req, res) => res.setHeader('Cache-Control', 'no-store').json({ googleClientId: googleClientId || null }));
+app.get('/api/auth/config', limitPublicRequest, (_req, res) => res.setHeader('Cache-Control', 'no-store').json({ googleClientId: googleClientId || null }));
 
 app.post('/api/auth/google', sameOriginMutation, limitGoogleSignIn, route(async (req, res) => {
   if (!googleClientId) return fail(res, 503, 'Google girişi henüz yapılandırılmadı. OAuth Web Client ID gerekli.');
@@ -411,8 +451,6 @@ app.post('/api/auth/google', sameOriginMutation, limitGoogleSignIn, route(async 
     if (!payload?.sub || !payload.email || payload.email_verified !== true) return fail(res, 401, 'Google hesabı doğrulanamadı.');
     const email = payload.email.toLowerCase();
     const name = String(payload.name || payload.given_name || email).slice(0, 120);
-    const token = crypto.randomBytes(32).toString('base64url');
-    const expiresAt = Math.floor(Date.now() / 1000) + sessionLifetimeSeconds;
     const userId = await withTransaction(async connection => {
       let current = await get('SELECT id FROM users WHERE google_sub=? FOR UPDATE', [payload.sub], connection);
       let id;
@@ -430,12 +468,22 @@ app.post('/api/auth/google', sameOriginMutation, limitGoogleSignIn, route(async 
       }
       await run("INSERT IGNORE INTO settings(user_id,currency,theme,language) VALUES (?,'TRY','light','tr')", [id], connection);
       await run('DELETE FROM auth_sessions WHERE expires_at<=?', [Math.floor(Date.now() / 1000)], connection);
-      await run('INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (?,?,?)', [hashSession(token), id, expiresAt], connection);
       return id;
     });
-    res.cookie(sessionCookieName, token, cookieOptions);
+    const user=asNumbers(await get('SELECT id,email,name,totp_enabled FROM users WHERE id=?',[userId]),['id']);
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ user: asNumbers(await get('SELECT id,email,name FROM users WHERE id=?', [userId]), ['id']) });
+    if(Number(user.totp_enabled)===1){
+      const challenge=crypto.randomBytes(32).toString('base64url');
+      await run('DELETE FROM auth_mfa_challenges WHERE expires_at<=?',[Math.floor(Date.now()/1000)]);
+      await run('INSERT INTO auth_mfa_challenges(token_hash,user_id,expires_at) VALUES (?,?,?)',[hashSession(challenge),userId,Math.floor(Date.now()/1000)+300]);
+      res.cookie(mfaChallengeCookieName,challenge,mfaChallengeCookieOptions);
+      return res.json({mfaRequired:true});
+    }
+    const token = crypto.randomBytes(32).toString('base64url');
+    const now=Math.floor(Date.now()/1000);
+    await run('INSERT INTO auth_sessions(token_hash,user_id,expires_at,last_activity_at) VALUES (?,?,?,?)',[hashSession(token),userId,now+sessionLifetimeSeconds,now]);
+    res.cookie(sessionCookieName, token, cookieOptions);
+    return res.json({ user: {id:user.id,email:user.email,name:user.name} });
   } catch (error) {
     if (error.code === 'ER_DUP_ENTRY') return fail(res, 409, 'Bu Google e-posta adresi başka bir hesaba bağlı.');
     const networkFailure = ['ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'ETIMEDOUT', 'EPIPE'].includes(error.code);
@@ -446,15 +494,117 @@ app.post('/api/auth/google', sameOriginMutation, limitGoogleSignIn, route(async 
   }
 }));
 
+app.post('/api/auth/mfa/verify', sameOriginMutation, limitMfaVerification, route(async (req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  const challenge=cookieValue(req,mfaChallengeCookieName);
+  const code=typeof req.body?.code==='string'?req.body.code.trim():'';
+  if(!challenge||challenge.length>128||(!/^\d{6}$/.test(code)&&!hashRecoveryCode(code)))return fail(res,400,'6 haneli doğrulama kodunu veya tek kullanımlık yedek kodu gir.');
+  if(!/^[a-f\d]{64}$/i.test(mfaEncryptionKey))return fail(res,503,'İki adımlı doğrulama sunucu anahtarı yapılandırılmamış.');
+  const sessionToken=crypto.randomBytes(32).toString('base64url');
+  const now=Math.floor(Date.now()/1000);
+  const result=await withTransaction(async connection=>{
+    const current=await get('SELECT c.user_id,c.expires_at,u.email,u.name,u.totp_enabled,u.totp_secret_encrypted,u.totp_last_counter FROM auth_mfa_challenges c JOIN users u ON u.id=c.user_id WHERE c.token_hash=? FOR UPDATE',[hashSession(challenge)],connection);
+    if(!current||Number(current.expires_at)<=now||Number(current.totp_enabled)!==1){
+      await run('DELETE FROM auth_mfa_challenges WHERE token_hash=?',[hashSession(challenge)],connection);
+      return null;
+    }
+    let valid=false;
+    try{
+      const counter=findTotpCounter(decryptSecret(current.totp_secret_encrypted,mfaEncryptionKey),code);
+      if(counter!==null&&counter>Number(current.totp_last_counter||0)){await run('UPDATE users SET totp_last_counter=? WHERE id=?',[counter,current.user_id],connection);valid=true;}
+    }catch{valid=false;}
+    if(!valid){
+      const recoveryHash=hashRecoveryCode(code);
+      if(recoveryHash){
+        const recovery=await get('SELECT code_hash FROM auth_mfa_recovery_codes WHERE user_id=? AND code_hash=? FOR UPDATE',[current.user_id,recoveryHash],connection);
+        if(recovery){await run('DELETE FROM auth_mfa_recovery_codes WHERE user_id=? AND code_hash=?',[current.user_id,recoveryHash],connection);valid=true;}
+      }
+    }
+    if(!valid)return false;
+    await run('DELETE FROM auth_mfa_challenges WHERE token_hash=?',[hashSession(challenge)],connection);
+    await run('DELETE FROM auth_sessions WHERE expires_at<=?',[now],connection);
+    await run('INSERT INTO auth_sessions(token_hash,user_id,expires_at,last_activity_at) VALUES (?,?,?,?)',[hashSession(sessionToken),current.user_id,now+sessionLifetimeSeconds,now],connection);
+    return {id:Number(current.user_id),email:current.email,name:current.name};
+  });
+  res.clearCookie(mfaChallengeCookieName,{httpOnly:true,sameSite:'strict',secure:process.env.NODE_ENV==='production',path:'/api/auth/mfa/verify'});
+  if(result===false)return fail(res,401,'Doğrulama kodu geçersiz veya süresi dolmuş.');
+  if(!result)return fail(res,401,'Giriş doğrulama isteğinin süresi doldu. Google ile yeniden giriş yap.');
+  res.cookie(sessionCookieName,sessionToken,cookieOptions);
+  return res.json({user:result});
+}));
+
 app.post('/api/auth/logout', sameOriginMutation, route(async (req, res) => {
   const token = cookieValue(req, sessionCookieName);
   if (token) await run('DELETE FROM auth_sessions WHERE token_hash=?', [hashSession(token)]);
   res.clearCookie(sessionCookieName, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/' });
+  const challenge=cookieValue(req,mfaChallengeCookieName);
+  if(challenge)await run('DELETE FROM auth_mfa_challenges WHERE token_hash=?',[hashSession(challenge)]);
+  res.clearCookie(mfaChallengeCookieName,{httpOnly:true,sameSite:'strict',secure:process.env.NODE_ENV==='production',path:'/api/auth/mfa/verify'});
   return res.status(204).end();
 }));
 
-app.use('/api', requireAuthentication, sameOriginMutation);
+app.use('/api', requireAuthentication, sameOriginMutation, limitAuthenticatedRequest);
 app.get('/api/auth/me', (req, res) => res.json({ user: { id: req.user.id, email: req.user.email, name: req.user.name } }));
+app.post('/api/auth/activity',(_req,res)=>res.status(204).end());
+app.get('/api/auth/mfa/status',route(async(req,res)=>{
+  const user=await get('SELECT totp_enabled FROM users WHERE id=?',[req.user.id]);
+  return res.setHeader('Cache-Control','no-store').json({enabled:Number(user?.totp_enabled)===1});
+}));
+app.post('/api/auth/mfa/setup',limitMfaManagement,route(async(req,res)=>{
+  if(!/^[a-f\d]{64}$/i.test(mfaEncryptionKey))return fail(res,503,'İki adımlı doğrulama için sunucu MFA_ENCRYPTION_KEY ayarı eksik.');
+  const user=await get('SELECT email,totp_enabled FROM users WHERE id=?',[req.user.id]);
+  if(!user)return fail(res,404,'Kullanıcı bulunamadı.');
+  if(Number(user.totp_enabled)===1)return fail(res,409,'İki adımlı doğrulama zaten etkin.');
+  const secret=createTotpSecret();
+  await run('UPDATE users SET totp_pending_secret_encrypted=? WHERE id=?',[encryptSecret(secret,mfaEncryptionKey),req.user.id]);
+  return res.setHeader('Cache-Control','no-store').json({secret,otpauthUri:provisioningUri(secret,user.email)});
+}));
+app.post('/api/auth/mfa/enable',limitMfaManagement,route(async(req,res)=>{
+  if(!/^[a-f\d]{64}$/i.test(mfaEncryptionKey))return fail(res,503,'İki adımlı doğrulama için sunucu MFA_ENCRYPTION_KEY ayarı eksik.');
+  const user=await get('SELECT totp_pending_secret_encrypted,totp_enabled FROM users WHERE id=?',[req.user.id]);
+  if(!user?.totp_pending_secret_encrypted)return fail(res,409,'Önce doğrulama uygulamasını kur.');
+  let valid=false;
+  try{valid=verifyTotp(decryptSecret(user.totp_pending_secret_encrypted,mfaEncryptionKey),String(req.body?.code||''));}catch{valid=false;}
+  if(!valid)return fail(res,400,'Kod doğrulanamadı. Telefonundaki güncel 6 haneli kodu kontrol et.');
+  const recoveryCodes=createRecoveryCodes();
+  await withTransaction(async connection=>{
+    await run('UPDATE users SET totp_secret_encrypted=totp_pending_secret_encrypted,totp_pending_secret_encrypted=NULL,totp_enabled=1 WHERE id=?',[req.user.id],connection);
+    await run('DELETE FROM auth_mfa_recovery_codes WHERE user_id=?',[req.user.id],connection);
+    for(const recoveryCode of recoveryCodes)await run('INSERT INTO auth_mfa_recovery_codes(user_id,code_hash) VALUES (?,?)',[req.user.id,hashRecoveryCode(recoveryCode)],connection);
+  });
+  return res.setHeader('Cache-Control','no-store').json({enabled:true,recoveryCodes});
+}));
+app.post('/api/auth/mfa/disable',limitMfaManagement,route(async(req,res)=>{
+  if(!/^[a-f\d]{64}$/i.test(mfaEncryptionKey))return fail(res,503,'İki adımlı doğrulama sunucu anahtarı yapılandırılmamış.');
+  const user=await get('SELECT totp_secret_encrypted,totp_enabled,totp_last_counter FROM users WHERE id=?',[req.user.id]);
+  if(!user||Number(user.totp_enabled)!==1)return fail(res,409,'İki adımlı doğrulama etkin değil.');
+  const code=String(req.body?.code||'');
+  let counter=null;
+  try{counter=findTotpCounter(decryptSecret(user.totp_secret_encrypted,mfaEncryptionKey),code);}catch{counter=null;}
+  const validTotp=counter!==null&&counter>Number(user.totp_last_counter||0);
+  let valid=validTotp;
+  if(!valid){
+    const recoveryHash=hashRecoveryCode(code);
+    if(recoveryHash){
+      const result=await withTransaction(async connection=>{
+        const recovery=await get('SELECT code_hash FROM auth_mfa_recovery_codes WHERE user_id=? AND code_hash=? FOR UPDATE',[req.user.id,recoveryHash],connection);
+        if(!recovery)return false;
+        await run('DELETE FROM auth_mfa_recovery_codes WHERE user_id=? AND code_hash=?',[req.user.id,recoveryHash],connection);
+        await run('UPDATE users SET totp_secret_encrypted=NULL,totp_pending_secret_encrypted=NULL,totp_enabled=0 WHERE id=?',[req.user.id],connection);
+        await run('DELETE FROM auth_mfa_recovery_codes WHERE user_id=?',[req.user.id],connection);
+        return true;
+      });
+      if(!result)return fail(res,401,'Doğrulama kodu doğru olmadığı için koruma kapatılamadı.');
+      return res.setHeader('Cache-Control','no-store').json({enabled:false});
+    }
+    return fail(res,401,'Doğrulama kodu doğru olmadığı için koruma kapatılamadı.');
+  }
+  await withTransaction(async connection=>{
+    await run('UPDATE users SET totp_secret_encrypted=NULL,totp_pending_secret_encrypted=NULL,totp_enabled=0,totp_last_counter=? WHERE id=?',[counter,req.user.id],connection);
+    await run('DELETE FROM auth_mfa_recovery_codes WHERE user_id=?',[req.user.id],connection);
+  });
+  return res.setHeader('Cache-Control','no-store').json({enabled:false});
+}));
 
 app.get('/api/exchange-rates/currencies', limitExchangeRateRequests, route(async (_req, res) => {
   let todayXml;
@@ -645,12 +795,18 @@ function validStatementItem(item) {
     && Number.isSafeInteger(item.category_id) && item.category_id > 0;
 }
 
-app.post('/api/statements/check', route(async (req, res) => {
+app.post('/api/statements/check', limitStatementPreview, route(async (req, res) => {
   const items = req.body?.items;
-  if (!Array.isArray(items) || items.length < 1 || items.length > 1000 || items.some(item => !item || !isValidDate(item.transaction_date) || typeof item.description !== 'string' || item.description.length > 140 || !Number.isSafeInteger(item.original_amount) || item.original_amount < 1 || !/^[A-Z]{3}$/.test(item.currency_code || '') || !['Income', 'Expense'].includes(item.type))) return fail(res, 400, 'Önizleme satırları geçersiz veya 1000 kayıt sınırını aşıyor.');
+  if (!Array.isArray(items) || items.length < 1 || items.length > 10000 || items.some(item => !item || !isValidDate(item.transaction_date) || typeof item.description !== 'string' || item.description.length > 140 || !Number.isSafeInteger(item.original_amount) || item.original_amount < 1 || !/^[A-Z]{3}$/.test(item.currency_code || '') || !['Income', 'Expense'].includes(item.type))) return fail(res, 400, 'Önizleme satırları geçersiz veya 10000 kayıt sınırını aşıyor.');
   const categories = await all('SELECT id,name,type FROM categories WHERE user_id=? ORDER BY name', [req.user.id]);
   const merchantRules = await all('SELECT normalized_merchant,category_id FROM merchant_category_rules WHERE user_id=?', [req.user.id]);
   const rules = new Map(merchantRules.map(item => [item.normalized_merchant, Number(item.category_id)]));
+  const dates=items.map(item => item.transaction_date).sort();
+  const existing=await all('SELECT id,import_fingerprint,description,merchant_name,transaction_date,original_amount,currency_code,type FROM transactions WHERE user_id=? AND transaction_date BETWEEN ? AND ?', [req.user.id,dates[0],dates[dates.length-1]]);
+  const exactMatches=new Map(existing.map(item => [item.import_fingerprint,item]));
+  const key=item => [item.transaction_date,item.original_amount,item.currency_code,item.type].join('|');
+  const groups=new Map();
+  for (const item of existing) { if (!groups.has(key(item))) groups.set(key(item),[]); groups.get(key(item)).push(item); }
   const result = [];
   for (const item of items) {
     const merchant = normalizeMerchant(item.merchant_name || item.description);
@@ -661,10 +817,10 @@ app.post('/api/statements/check', route(async (req, res) => {
       : guessCategory(item.merchant_name || item.description, item.type, categories);
     const fingerprint = statementFingerprint({ ...item, merchant_name: merchant });
     let duplicate = null;
-    const exact = await get('SELECT id,description,transaction_date FROM transactions WHERE user_id=? AND import_fingerprint=?', [req.user.id, fingerprint]);
+    const exact = exactMatches.get(fingerprint);
     if (exact) duplicate = { kind: 'exact', transactionId: Number(exact.id), description: exact.description };
     else {
-      const candidates = await all('SELECT id,description,merchant_name,transaction_date FROM transactions WHERE user_id=? AND transaction_date=? AND original_amount=? AND currency_code=? AND type=? ORDER BY id DESC LIMIT 12', [req.user.id, item.transaction_date, item.original_amount, item.currency_code, item.type]);
+      const candidates = (groups.get(key(item)) || []);
       const likely = candidates.find(candidate => likelySameMerchant(merchant, candidate.merchant_name || candidate.description));
       if (likely) duplicate = { kind: 'possible', transactionId: Number(likely.id), description: likely.description };
     }
@@ -673,21 +829,23 @@ app.post('/api/statements/check', route(async (req, res) => {
   return res.setHeader('Cache-Control', 'no-store').json({ items: result });
 }));
 
-app.post('/api/statements/import', route(async (req, res) => {
+app.post('/api/statements/import', limitStatementImport, route(async (req, res) => {
   const body = req.body || {};
   const items = body.items;
-  if (!/^[a-f0-9]{64}$/.test(body.fileSha256 || '') || typeof body.fileName !== 'string' || !Array.isArray(items) || items.length > 1000 || !Number.isInteger(body.skippedCount) || body.skippedCount < 0 || body.skippedCount > 1000) return fail(res, 400, 'İçe aktarma bilgileri geçersiz.');
+  if (!/^[a-f0-9]{64}$/.test(body.fileSha256 || '') || typeof body.fileName !== 'string' || !Array.isArray(items) || items.length > 10000 || !Number.isInteger(body.skippedCount) || body.skippedCount < 0 || body.skippedCount > 10000) return fail(res, 400, 'İçe aktarma bilgileri geçersiz.');
   if (!items.length) return fail(res, 400, 'İçe aktarılacak geçerli bir işlem seçilmedi.');
-  const priorBatch = await get('SELECT id,imported_count,duplicate_count,skipped_count FROM statement_imports WHERE user_id=? AND file_sha256=?', [req.user.id, body.fileSha256]);
-  if (priorBatch) return res.status(409).json({ error: 'Bu ekstre daha önce içe aktarılmış.', duplicateFile: true, result: { imported: 0, duplicates: priorBatch.imported_count + priorBatch.duplicate_count, skipped: priorBatch.skipped_count } });
+  const preferences = await get('SELECT allow_duplicate_imports FROM settings WHERE user_id=?', [req.user.id]);
+  const allowDuplicates = Number(preferences?.allow_duplicate_imports) === 1;
 
   let invalid = 0;
   let skippedKinds = 0;
+  const categoryTypes = new Map((await all('SELECT id,type FROM categories WHERE user_id=?', [req.user.id])).map(row => [Number(row.id), row.type]));
   const validItems = [];
   for (const item of items) {
     if (item?.entry_kind === 'transfer' || item?.entry_kind === 'card_payment') { skippedKinds += 1; continue; }
-    if (!validStatementItem(item) || (item.entry_kind === 'refund' && item.type !== 'Expense')) { invalid += 1; continue; }
-    const validation = await validateTransaction({ ...item, description: item.description.trim(), rate_source: item.rate_source, rate_effective_date: item.rate_effective_date, tcmb_rate: item.tcmb_rate ?? null }, req.user.id);
+    const dateAmount=Number(String(item?.transaction_date || '').split('-').reverse().join(''))*100;
+    if ((item?.currency_code==='TRY' && item.original_amount===dateAmount) || !validStatementItem(item) || (item.entry_kind === 'refund' && item.type !== 'Expense')) { invalid += 1; continue; }
+    const validation = await validateTransaction({ ...item, description: item.description.trim(), rate_source: item.rate_source, rate_effective_date: item.rate_effective_date, tcmb_rate: item.tcmb_rate ?? null }, req.user.id, categoryTypes);
     if (validation) { invalid += 1; continue; }
     validItems.push({ ...item, description: item.description.trim(), merchant_name: normalizeMerchant(item.merchant_name || item.description), fingerprint: statementFingerprint(item) });
   }
@@ -700,29 +858,34 @@ app.post('/api/statements/import', route(async (req, res) => {
       const fileName = ['.csv','.xls','.xlsx','.pdf'].includes(extension) ? `Ekstre${extension}` : 'Ekstre';
       const batch = await run('INSERT INTO statement_imports(user_id,file_sha256,file_name,source_count,skipped_count) VALUES (?,?,?,?,?)', [req.user.id, body.fileSha256, fileName, items.length + Number(body.skippedCount), Number(body.skippedCount) + skippedKinds], connection);
       const batchId = Number(batch.insertId);
-      let imported = 0;
-      let duplicates = 0;
-      let potentialDuplicates = 0;
+      await get('SELECT id FROM users WHERE id=? FOR UPDATE', [req.user.id], connection);
+      const dates = validItems.map(item => item.transaction_date).sort();
+      const existing = await all('SELECT import_fingerprint,transaction_date,type,currency_code,original_amount,merchant_name,description FROM transactions WHERE user_id=? AND transaction_date BETWEEN ? AND ?', [req.user.id,dates[0],dates[dates.length-1]], connection);
+      const fingerprints = new Set(existing.map(item => item.import_fingerprint).filter(Boolean));
+      const key = item => [item.transaction_date,item.type,item.currency_code,item.original_amount].join('|');
+      const groups = new Map();
+      const add = item => { if (!groups.has(key(item))) groups.set(key(item),[]); groups.get(key(item)).push(item); };
+      existing.forEach(add);
+      let duplicates=0, potentialDuplicates=0;
+      const accepted=[];
       for (const item of validItems) {
-        if (item.duplicateKind === 'possible' && item.confirmPotentialDuplicate !== true) { potentialDuplicates += 1; continue; }
-        const prior = await get('SELECT id FROM transactions WHERE user_id=? AND import_fingerprint=?', [req.user.id, item.fingerprint], connection);
-        if (prior) { duplicates += 1; continue; }
-        const sameDay = await all('SELECT id,merchant_name,description FROM transactions WHERE user_id=? AND transaction_date=? AND original_amount=? AND currency_code=? AND type=? LIMIT 12', [req.user.id, item.transaction_date, item.original_amount, item.currency_code, item.type], connection);
-        const possible = sameDay.find(candidate => likelySameMerchant(item.merchant_name, candidate.merchant_name || candidate.description));
-        if (possible && item.confirmPotentialDuplicate !== true) { potentialDuplicates += 1; continue; }
-        let inserted;
-        try {
-          inserted = await run('INSERT INTO transactions(user_id,type,amount,original_amount,currency_code,exchange_rate,tcmb_rate,rate_source,rate_effective_date,entry_kind,merchant_name,import_fingerprint,import_batch_id,description,category_id,transaction_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [req.user.id, item.type, item.amount, item.original_amount, item.currency_code, String(item.exchange_rate), item.tcmb_rate ? String(item.tcmb_rate) : null, item.rate_source, item.rate_effective_date || null, item.entry_kind, item.merchant_name, item.fingerprint, batchId, item.description, item.category_id, item.transaction_date], connection);
-        } catch (error) {
-          if (error.code === 'ER_DUP_ENTRY') { duplicates += 1; continue; }
-          throw error;
+        if (!allowDuplicates) {
+          if (fingerprints.has(item.fingerprint)) { duplicates++; continue; }
+          const possible=(groups.get(key(item)) || []).some(candidate => likelySameMerchant(item.merchant_name,candidate.merchant_name || candidate.description));
+          if ((possible || item.duplicateKind==='possible') && item.confirmPotentialDuplicate!==true) { potentialDuplicates++; continue; }
         }
-        await run('INSERT INTO exchange_rate_logs(transaction_id,user_id,currency_code,original_amount,try_amount,applied_rate,tcmb_rate,rate_source,rate_effective_date) VALUES (?,?,?,?,?,?,?,?,?)', [inserted.insertId, req.user.id, item.currency_code, item.original_amount, item.amount, String(item.exchange_rate), item.tcmb_rate ? String(item.tcmb_rate) : null, item.rate_source, item.rate_effective_date || null], connection);
-        if (item.learnMerchant && item.merchant_name) {
-          await run('INSERT INTO merchant_category_rules(user_id,normalized_merchant,category_id) VALUES (?,?,?) ON DUPLICATE KEY UPDATE category_id=VALUES(category_id)', [req.user.id, item.merchant_name, item.category_id], connection);
-        }
-        imported += 1;
+        accepted.push(item); fingerprints.add(item.fingerprint); add(item);
       }
+      const fields='user_id,type,amount,original_amount,currency_code,exchange_rate,tcmb_rate,rate_source,rate_effective_date,entry_kind,merchant_name,import_fingerprint,deduplication_key,import_batch_id,description,category_id,transaction_date';
+      for (let offset=0;offset<accepted.length;offset+=250) {
+        const chunk=accepted.slice(offset,offset+250);
+        const values=chunk.flatMap(item => [req.user.id,item.type,item.amount,item.original_amount,item.currency_code,String(item.exchange_rate),item.tcmb_rate ? String(item.tcmb_rate) : null,item.rate_source,item.rate_effective_date || null,item.entry_kind,item.merchant_name,item.fingerprint,allowDuplicates ? null : item.fingerprint,batchId,item.description,item.category_id,item.transaction_date]);
+        await run('INSERT INTO transactions('+fields+') VALUES '+chunk.map(() => '('+Array(17).fill('?').join(',')+')').join(','),values,connection);
+      }
+      await run('INSERT INTO exchange_rate_logs(transaction_id,user_id,currency_code,original_amount,try_amount,applied_rate,tcmb_rate,rate_source,rate_effective_date) SELECT id,user_id,currency_code,original_amount,amount,exchange_rate,tcmb_rate,rate_source,rate_effective_date FROM transactions WHERE user_id=? AND import_batch_id=?',[req.user.id,batchId],connection);
+      const rules=new Map(accepted.filter(item => item.learnMerchant && item.merchant_name).map(item => [item.merchant_name,item.category_id]));
+      if (rules.size) await run('INSERT INTO merchant_category_rules(user_id,normalized_merchant,category_id) VALUES '+[...rules].map(() => '(?,?,?)').join(',')+' ON DUPLICATE KEY UPDATE category_id=VALUES(category_id)',[...rules].flatMap(([merchant,category]) => [req.user.id,merchant,category]),connection);
+      const imported=accepted.length;
       const skipped = Number(body.skippedCount) + skippedKinds + invalid + potentialDuplicates;
       await run('UPDATE statement_imports SET imported_count=?,duplicate_count=?,skipped_count=? WHERE id=? AND user_id=?', [imported, duplicates, skipped, batchId, req.user.id], connection);
       return { imported, duplicates, skipped, potentialDuplicates, invalid, batchId };
@@ -745,7 +908,8 @@ app.delete('/api/merchant-rules/:merchant', route(async (req, res) => {
 app.get('/api/statements', route(async (req, res) => res.json(rowsAsNumbers(await all('SELECT id,file_name,source_count,imported_count,duplicate_count,skipped_count,created_at FROM statement_imports WHERE user_id=? ORDER BY created_at DESC,id DESC LIMIT 50', [req.user.id]), ['id','source_count','imported_count','duplicate_count','skipped_count']))));
 
 app.get('/api/dashboard/summary', route(async (req, res) => {
-  const totals = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income, COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=?", [req.user.id]);
+  const totals = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income, COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense,COALESCE(SUM(import_fingerprint IS NOT NULL AND currency_code='TRY' AND original_amount=CAST(DATE_FORMAT(transaction_date,'%d%m%Y') AS UNSIGNED)*100),0) integrity_issues FROM transactions WHERE user_id=?", [req.user.id]);
+  if (Number(totals.integrity_issues)>0) return fail(res,422,'İçe aktarılmış kayıtlarda tarih tutar olarak okunmuş olabilir. Kaynak ekstreyle doğrulama gerekli; özet durduruldu.');
   const monthParts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Istanbul', year: 'numeric', month: '2-digit' }).formatToParts(new Date()).map(part => [part.type, part.value]));
   const month = `${monthParts.year}-${monthParts.month}`; const previous = new Date(`${month}-01T00:00:00Z`); previous.setUTCMonth(previous.getUTCMonth() - 1); const priorMonth = previous.toISOString().slice(0, 7);
   const monthly = await get("SELECT COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? AND DATE_FORMAT(transaction_date,'%Y-%m')=?", [req.user.id, month]);
@@ -755,12 +919,20 @@ app.get('/api/dashboard/summary', route(async (req, res) => {
   return res.json({ balance: Number(totals.income) - Number(totals.expense), income: Number(totals.income), expense: Number(totals.expense), monthIncome: Number(monthly.income), monthExpense: Number(monthly.expense), previousMonthIncome: Number(prior.income), previousMonthExpense: Number(prior.expense), recent, categories });
 }));
 
+app.get('/api/reports/totals', route(async (req,res) => {
+  const {type,from,to}=req.query;
+  if (!['Income','Expense'].includes(type) || !isValidDate(from) || !isValidDate(to) || from>to) return fail(res,400,'Rapor türü ve tarih aralığı geçersiz.');
+  const result=await get("SELECT COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount ELSE amount END),0) amount,COALESCE(SUM(import_fingerprint IS NOT NULL AND currency_code='TRY' AND original_amount=CAST(DATE_FORMAT(transaction_date,'%d%m%Y') AS UNSIGNED)*100),0) issues FROM transactions WHERE user_id=? AND type=? AND transaction_date BETWEEN ? AND ?",[req.user.id,type,from,to]);
+  return res.json({type,amount:Number(result.amount),issues:Number(result.issues)});
+}));
+
 app.get('/api/reports/monthly', route(async (req, res) => {
   const year = req.query.year === undefined ? new Date().getFullYear() : Number(req.query.year);
   if (typeof req.query.year !== 'undefined' && (typeof req.query.year !== 'string' || !/^\d{4}$/.test(req.query.year) || !Number.isInteger(year) || year < 1000 || year > 9999)) {
     return fail(res, 400, 'Rapor yılı 1000 ile 9999 arasında geçerli bir yıl olmalı.');
   }
-  const rows = await all("SELECT LPAD(MONTH(transaction_date),2,'0') month,COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense FROM transactions WHERE user_id=? AND YEAR(transaction_date)=? GROUP BY MONTH(transaction_date) ORDER BY MONTH(transaction_date)", [req.user.id, year]);
+  const rows = await all("SELECT LPAD(MONTH(transaction_date),2,'0') month,COALESCE(SUM(CASE WHEN type='Income' AND entry_kind='standard' THEN amount ELSE 0 END),0) income,COALESCE(SUM(CASE WHEN entry_kind='refund' THEN -amount WHEN type='Expense' THEN amount ELSE 0 END),0) expense,COALESCE(SUM(import_fingerprint IS NOT NULL AND currency_code='TRY' AND original_amount=CAST(DATE_FORMAT(transaction_date,'%d%m%Y') AS UNSIGNED)*100),0) integrity_issues FROM transactions WHERE user_id=? AND YEAR(transaction_date)=? GROUP BY MONTH(transaction_date) ORDER BY MONTH(transaction_date)", [req.user.id, year]);
+  if (rows.some(row => Number(row.integrity_issues)>0)) return fail(res,422,'Aylık grafik durduruldu: içe aktarılmış kayıtlarda tarih tutar olarak okunmuş olabilir. Kaynak ekstreyle doğrulama gerekli.');
   const map = new Map(rows.map(row => [Number(row.month), row]));
   return res.json(Array.from({ length: 12 }, (_, index) => asNumbers(map.get(index + 1) || { month: String(index + 1).padStart(2, '0'), income: 0, expense: 0 }, ['income', 'expense'])));
 }));
@@ -791,7 +963,10 @@ function netPeriod(transactions) {
 }
 
 async function getAnalysisTransactions(userId, from) {
-  return rowsAsNumbers(await all(`${transactionSelect} WHERE t.user_id=? AND t.transaction_date>=? ORDER BY t.transaction_date,t.id LIMIT 10000`, [userId, from]), ['id','amount','original_amount','exchange_rate','tcmb_rate','category_id']);
+  const records=rowsAsNumbers(await all(`SELECT t.import_fingerprint, source.* FROM (${transactionSelect} WHERE t.user_id=? AND t.transaction_date>=? ORDER BY t.transaction_date,t.id LIMIT 100001) source JOIN transactions t ON t.id=source.id AND t.user_id=?`,[userId,from,userId]),['id','amount','original_amount','exchange_rate','tcmb_rate','category_id']);
+  if (records.length>100000) throw Object.assign(new Error('Analysis range exceeds limit'),{status:422,publicMessage:'Bu analiz aralığı 100.000 kaydı aşıyor. Tarih aralığını daralt.'});
+  if (records.some(item => item.import_fingerprint && item.currency_code==='TRY' && item.original_amount===Number(item.transaction_date.split('-').reverse().join(''))*100)) throw Object.assign(new Error('Invalid imported date amount'),{status:422,publicMessage:'İçe aktarılmış kayıtlarda tarih tutar olarak okunmuş olabilir. Kaynak ekstreyle doğrulama gerekli; finansal analiz durduruldu.'});
+  return records;
 }
 
 app.get('/api/reports/analysis', route(async (req, res) => {
@@ -995,23 +1170,36 @@ app.patch('/api/plans/:id/status', route(async (req, res) => {
   if (!result.affectedRows) return fail(res, 404, 'Plan bulunamadı.');
   return res.json({ id, status });
 }));
-app.get('/api/settings', route(async (req, res) => res.json(await get('SELECT currency,theme,language FROM settings WHERE user_id=?', [req.user.id]))));
+async function settingsForUser(userId) {
+  const settings = await get('SELECT currency,theme,language,allow_duplicate_imports,session_timeout_minutes FROM settings WHERE user_id=?', [userId]);
+  return settings ? { currency: settings.currency, theme: settings.theme, language: settings.language, allowDuplicateImports: Number(settings.allow_duplicate_imports) === 1, sessionTimeoutMinutes:Number(settings.session_timeout_minutes) } : null;
+}
+
+app.get('/api/settings', route(async (req, res) => res.json(await settingsForUser(req.user.id))));
 app.put('/api/settings', route(async (req, res) => {
-  const { currency = 'TRY', theme = 'light', language = 'tr' } = req.body || {};
-  if (currency !== 'TRY' || !['light', 'dark'].includes(theme) || language !== 'tr') return fail(res, 400, 'Ayarlar geçersiz.');
-  await run('UPDATE settings SET currency=?,theme=?,language=? WHERE user_id=?', [currency, theme, language, req.user.id]);
-  return res.json(await get('SELECT currency,theme,language FROM settings WHERE user_id=?', [req.user.id]));
+  const body = req.body || {};
+  const current = await get('SELECT currency,theme,language,allow_duplicate_imports,session_timeout_minutes FROM settings WHERE user_id=?', [req.user.id]);
+  if (!current) return fail(res, 404, 'Kullanıcı ayarları bulunamadı.');
+  const currency = body.currency ?? current.currency;
+  const theme = body.theme ?? current.theme;
+  const language = body.language ?? current.language;
+  const allowDuplicateImports = body.allowDuplicateImports ?? (Number(current.allow_duplicate_imports) === 1);
+  const sessionTimeoutMinutes = body.sessionTimeoutMinutes ?? Number(current.session_timeout_minutes);
+  if (currency !== 'TRY' || !['light', 'dark'].includes(theme) || language !== 'tr' || typeof allowDuplicateImports !== 'boolean' || !Number.isInteger(sessionTimeoutMinutes) || sessionTimeoutMinutes<1 || sessionTimeoutMinutes>480) return fail(res, 400, 'Ayarlar geçersiz.');
+  await run('UPDATE settings SET currency=?,theme=?,language=?,allow_duplicate_imports=?,session_timeout_minutes=? WHERE user_id=?', [currency, theme, language, allowDuplicateImports ? 1 : 0,sessionTimeoutMinutes, req.user.id]);
+  return res.json(await settingsForUser(req.user.id));
 }));
+require('./calendar-routes.cjs').registerCalendarRoutes({ app, db, route, fail, withTransaction, localToday, isValidDate, positiveId });
 app.use('/api', (_req, res) => fail(res, 404, 'API endpoint bulunamadı.'));
 app.use((error, _req, res, _next) => {
-  console.error('Request failed:', error.code || 'UNKNOWN');
+  if (!error.status || error.status >= 500) console.error('Request failed:', error.code || 'UNKNOWN');
   if (error.code === 'ER_TOO_MANY_USER_CONNECTIONS' || error.code === 'ER_CON_COUNT_ERROR') {
     return fail(res, 503, 'MySQL eşzamanlı bağlantı sınırına ulaşıldı. API bağlantı havuzu azaltıldı; sunucuyu yeniden başlatıp tekrar deneyin.');
   }
   if (['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'PROTOCOL_CONNECTION_LOST'].includes(error.code)) {
     return fail(res, 503, 'MySQL bağlantısı şu anda kullanılamıyor. Veritabanı sunucusunu kontrol edip tekrar deneyin.');
   }
-  return res.status(error.status || 500).json({ error: error.status === 400 ? 'İstek gövdesi geçersiz JSON içeriyor.' : 'Beklenmeyen sunucu hatası.' });
+  return res.status(error.status || 500).json({ error: error.publicMessage || (error.status === 400 ? 'İstek gövdesi geçersiz JSON içeriyor.' : 'Beklenmeyen sunucu hatası.') });
 });
 
 const browserPath = path.join(__dirname, '..', 'dist', 'my-finance', 'browser');

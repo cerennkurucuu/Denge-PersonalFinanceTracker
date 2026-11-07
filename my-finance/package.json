@@ -14,9 +14,10 @@
     "test": "ng test",
     "test:e2e": "playwright test",
     "start:prod": "node --use-system-ca scripts/run-api.cjs",
+    "security:setup": "node scripts/security-setup.cjs",
     "screenshots": "node scripts/render-design-screenshots.cjs",
-    "test:api": "node --test server/tests/api.test.cjs server/tests/exchange-rates.test.cjs server/tests/finance-engine.test.cjs server/tests/merchant-category-rules.test.cjs server/tests/security-config.test.cjs",
-    "test:mysql": "node --test server/tests/mysql.integration.test.cjs"
+    "test:api": "node --test server/tests/api.test.cjs server/tests/exchange-rates.test.cjs server/tests/finance-engine.test.cjs server/tests/merchant-category-rules.test.cjs server/tests/security-config.test.cjs server/tests/calendar-engine.test.cjs server/tests/totp.test.cjs",
+    "test:mysql": "node --test --test-concurrency=1 server/tests/mysql.integration.test.cjs server/tests/calendar.mysql.test.cjs"
   },
   "private": true,
   "dependencies": {

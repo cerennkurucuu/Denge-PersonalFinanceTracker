@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const request = require('supertest');
 const loadLocalEnv = require('../../scripts/load-local-env.cjs');
+const { codeAt } = require('../totp.cjs');
 
 loadLocalEnv(path.join(__dirname, '../..'));
 if (process.env.MYSQL_TEST_MODE !== '1') throw new Error('Set MYSQL_TEST_MODE=1 to run tests against the configured MySQL test database.');
@@ -20,6 +21,7 @@ async function cleanupTestAccounts() {
   for (const user of users) {
     const id = Number(user.id);
     await db.execute('DELETE FROM transactions WHERE user_id=?', [id]);
+    await db.execute('DELETE FROM calendar_plans WHERE user_id=?', [id]);
     await db.execute('DELETE FROM categories WHERE user_id=?', [id]);
     await db.execute('DELETE FROM settings WHERE user_id=?', [id]);
     await db.execute('DELETE FROM auth_sessions WHERE user_id=?', [id]);
@@ -43,7 +45,7 @@ before(async () => {
   await db.execute('INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES (?,?,?)', [tokenHash, testUserId, Math.floor(Date.now() / 1000) + 600]);
   const cookie = `denge_session=${token}`;
   const withCookie = method => url => request(app)[method](url).set('Cookie', cookie);
-  primary = { get: withCookie('get'), post: withCookie('post'), put: withCookie('put'), patch: withCookie('patch'), delete: withCookie('delete') };
+  primary = { cookie, get: withCookie('get'), post: withCookie('post'), put: withCookie('put'), patch: withCookie('patch'), delete: withCookie('delete') };
 });
 
 const tryTransaction = (fields = {}) => ({
@@ -52,12 +54,51 @@ const tryTransaction = (fields = {}) => ({
   ...fields,
 });
 
+test('imports 10,000 synthetic rows in batches and returns the exact scoped income total', async t => {
+  const date='2026-10-17';
+  const items=Array.from({length:10000},(_,i)=>({...tryTransaction({type:'Income',category_id:incomeCategory,amount:1000+i,original_amount:1000+i,transaction_date:date,description:`Bulk benchmark ${i}`}),entry_kind:'standard',merchant_name:`Benchmark ${i}`,tcmb_rate:null,learnMerchant:false}));
+  // Use a persistent real HTTP server and Node's native client for large-body
+  // transfer; Supertest remains in use for the other endpoint assertions.
+  const server=await new Promise(resolve=>{const instance=app.listen(0,'127.0.0.1',()=>resolve(instance));});
+  const bulkPost=async(url,body,status)=>{
+    const response=await fetch('http://127.0.0.1:'+server.address().port+url,{method:'POST',headers:{'Content-Type':'application/json',Cookie:primary.cookie},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
+    const parsed=await response.json();assert.equal(response.status,status,parsed.error);return {body:parsed};
+  };
+  try {
+  const previewStarted=performance.now();
+  const preview=await bulkPost('/api/statements/check',{items},200);
+  assert.equal(preview.body.items.length,10000);
+  t.diagnostic(`10,000-row duplicate/category preview: ${Math.round(performance.now()-previewStarted)} ms`);
+  const started=performance.now();
+  const result=await bulkPost('/api/statements/import',{fileSha256:crypto.randomBytes(32).toString('hex'),fileName:'synthetic.csv',skippedCount:0,items},201);
+  t.diagnostic(`10,000 rows: ${Math.round(performance.now()-started)} ms`);
+  assert.equal(result.body.result.imported,10000);
+  const totals=await primary.get(`/api/reports/totals?type=Income&from=${date}&to=${date}`).expect(200);
+  assert.equal(totals.body.amount,59995000);
+  assert.equal(totals.body.issues,0);
+  const [logs]=await db.execute('SELECT COUNT(*) count FROM exchange_rate_logs WHERE user_id=? AND transaction_id IN (SELECT id FROM transactions WHERE user_id=? AND import_batch_id=?)',[testUserId,testUserId,result.body.result.batchId]);
+  assert.equal(Number(logs[0].count),10000);
+  await db.execute('DELETE FROM transactions WHERE user_id=? AND import_batch_id=?',[testUserId,result.body.result.batchId]);
+  } finally { await new Promise(resolve=>server.close(resolve)); }
+});
+
+test('stops reports and analysis when a legacy imported amount is actually a date', async () => {
+  const [bad]=await db.execute('INSERT INTO transactions(user_id,type,amount,original_amount,currency_code,exchange_rate,rate_source,description,category_id,transaction_date,import_fingerprint) VALUES (?,?,?,?,?,?,?,?,?,?,?)',[testUserId,'Income',3110202600,3110202600,'TRY',1,'TRY','Synthetic legacy date regression',incomeCategory,'2026-10-31',crypto.randomBytes(32).toString('hex')]);
+  try {
+    const total=await primary.get('/api/reports/totals?type=Income&from=2026-10-01&to=2026-10-31').expect(200);
+    assert.equal(total.body.issues,1);
+    await primary.get('/api/dashboard/summary').expect(422);
+    await primary.get('/api/reports/monthly?year=2026').expect(422);
+    await primary.get('/api/reports/analysis?from=2026-10-01&to=2026-10-31').expect(422);
+  } finally { await db.execute('DELETE FROM transactions WHERE id=? AND user_id=?',[bad.insertId,testUserId]); }
+});
+
 test('replays MySQL migrations safely if DDL finished before version records were written', async () => {
   const [inserted] = await db.execute(
     'INSERT INTO transactions(user_id,type,amount,original_amount,currency_code,exchange_rate,rate_source,description,category_id,transaction_date) VALUES (?,?,?,?,?,?,?,?,?,?)',
     [testUserId, 'Expense', 98765, 98765, 'TRY', 1, 'TRY', 'Migration data retention test', expenseCategory, '2026-11-02'],
   );
-  for (const migration of ['002-currency-transactions', '003-tenant-foreign-keys', '004-import-and-planning']) {
+  for (const migration of ['002-currency-transactions', '003-tenant-foreign-keys', '004-import-and-planning', '005-duplicate-import-preferences', '007-session-timeout', '008-authenticator-mfa', '009-totp-replay-prevention']) {
     const [result] = await db.execute('DELETE FROM schema_migrations WHERE version=?', [migration]);
     assert.equal(result.affectedRows, 1);
   }
@@ -69,11 +110,11 @@ test('replays MySQL migrations safely if DDL finished before version records wer
     ['transactions'],
   );
   const names = new Set(columns.map(column => column.COLUMN_NAME));
-  for (const column of ['original_amount', 'currency_code', 'exchange_rate', 'tcmb_rate', 'rate_source', 'rate_effective_date', 'entry_kind', 'merchant_name', 'import_fingerprint', 'import_batch_id']) {
+  for (const column of ['original_amount', 'currency_code', 'exchange_rate', 'tcmb_rate', 'rate_source', 'rate_effective_date', 'entry_kind', 'merchant_name', 'import_fingerprint', 'deduplication_key', 'import_batch_id']) {
     assert.ok(names.has(column), `Expected migration column ${column} to exist`);
   }
-  const [records] = await db.execute('SELECT version FROM schema_migrations WHERE version IN (?,?,?)', ['002-currency-transactions', '003-tenant-foreign-keys', '004-import-and-planning']);
-  assert.equal(records.length, 3);
+  const [records] = await db.execute('SELECT version FROM schema_migrations WHERE version IN (?,?,?,?,?,?,?)', ['002-currency-transactions', '003-tenant-foreign-keys', '004-import-and-planning', '005-duplicate-import-preferences', '007-session-timeout', '008-authenticator-mfa', '009-totp-replay-prevention']);
+  assert.equal(records.length, 7);
   const [planningTables] = await db.execute("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('statement_imports','merchant_category_rules','financial_plans','plan_category_preferences','plan_progress','recommendation_feedback')");
   assert.equal(planningTables.length, 6);
   const [ownershipConstraints] = await db.execute(
@@ -90,6 +131,62 @@ test('replays MySQL migrations safely if DDL finished before version records wer
   assert.equal(Number(preserved[0].original_amount), 98765);
   assert.equal(preserved[0].currency_code, 'TRY');
   await db.execute('DELETE FROM transactions WHERE id=? AND user_id=?', [Number(inserted.insertId), testUserId]);
+});
+
+test('supports encrypted authenticator enrollment, login challenge, and verified disable', async () => {
+  assert.match(process.env.MFA_ENCRYPTION_KEY || '', /^[a-f\d]{64}$/i, 'run npm run security:setup first');
+  await primary.get('/api/auth/mfa/status').expect(200,{enabled:false});
+  const setup=await primary.post('/api/auth/mfa/setup').send({}).expect(200);
+  assert.match(setup.body.secret,/^[A-Z2-7]{32}$/);
+  const [stored]=await db.execute('SELECT totp_pending_secret_encrypted FROM users WHERE id=?',[testUserId]);
+  assert.ok(stored[0].totp_pending_secret_encrypted);
+  assert.notEqual(stored[0].totp_pending_secret_encrypted,setup.body.secret);
+  await primary.post('/api/auth/mfa/enable').send({code:'000000'}).expect(400);
+  const code=codeAt(setup.body.secret,Math.floor(Date.now()/30_000));
+  const enabled=await primary.post('/api/auth/mfa/enable').send({code}).expect(200);
+  assert.equal(enabled.body.enabled,true);
+  assert.equal(enabled.body.recoveryCodes.length,10);
+  const [recoveryRows]=await db.execute('SELECT code_hash FROM auth_mfa_recovery_codes WHERE user_id=?',[testUserId]);
+  assert.equal(recoveryRows.length,10);
+  assert.notEqual(recoveryRows[0].code_hash,enabled.body.recoveryCodes[0].replaceAll('-',''));
+  await primary.get('/api/auth/mfa/status').expect(200,{enabled:true});
+
+  const challenge=crypto.randomBytes(32).toString('base64url');
+  const challengeHash=crypto.createHash('sha256').update(challenge).digest('hex');
+  await db.execute('INSERT INTO auth_mfa_challenges(token_hash,user_id,expires_at) VALUES (?,?,?)',[challengeHash,testUserId,Math.floor(Date.now()/1000)+300]);
+  const loginCode=enabled.body.recoveryCodes[0];
+  const login=await request(app).post('/api/auth/mfa/verify').set('Cookie',`denge_mfa_challenge=${challenge}`).send({code:loginCode}).expect(200);
+  const sessionCookie=login.headers['set-cookie'].find(value=>value.startsWith('denge_session=')).split(';')[0];
+  await request(app).get('/api/auth/me').set('Cookie',sessionCookie).expect(200);
+  await request(app).post('/api/auth/mfa/verify').set('Cookie',`denge_mfa_challenge=${challenge}`).send({code:loginCode}).expect(401);
+
+  const totpChallenge=crypto.randomBytes(32).toString('base64url');
+  await db.execute('INSERT INTO auth_mfa_challenges(token_hash,user_id,expires_at) VALUES (?,?,?)',[crypto.createHash('sha256').update(totpChallenge).digest('hex'),testUserId,Math.floor(Date.now()/1000)+300]);
+  const totpLoginCode=codeAt(setup.body.secret,Math.floor(Date.now()/30_000));
+  await request(app).post('/api/auth/mfa/verify').set('Cookie',`denge_mfa_challenge=${totpChallenge}`).send({code:totpLoginCode}).expect(200);
+  const replayChallenge=crypto.randomBytes(32).toString('base64url');
+  await db.execute('INSERT INTO auth_mfa_challenges(token_hash,user_id,expires_at) VALUES (?,?,?)',[crypto.createHash('sha256').update(replayChallenge).digest('hex'),testUserId,Math.floor(Date.now()/1000)+300]);
+  await request(app).post('/api/auth/mfa/verify').set('Cookie',`denge_mfa_challenge=${replayChallenge}`).send({code:totpLoginCode}).expect(401);
+
+  const disableCode=codeAt(setup.body.secret,Math.floor((Date.now()+30_000)/30_000));
+  await primary.post('/api/auth/mfa/disable').send({code:disableCode}).expect(200,{enabled:false});
+  await primary.get('/api/auth/mfa/status').expect(200,{enabled:false});
+});
+
+test('persists configurable idle timeout and invalidates an idle server session', async () => {
+  const initial=await primary.get('/api/settings').expect(200);
+  assert.equal(initial.body.sessionTimeoutMinutes,10);
+  await primary.put('/api/settings').send({sessionTimeoutMinutes:15}).expect(200);
+  assert.equal((await primary.get('/api/settings').expect(200)).body.sessionTimeoutMinutes,15);
+  await primary.put('/api/settings').send({sessionTimeoutMinutes:481}).expect(400);
+  await primary.put('/api/settings').send({sessionTimeoutMinutes:10}).expect(200);
+
+  const idleToken=crypto.randomBytes(32).toString('base64url');
+  const idleHash=crypto.createHash('sha256').update(idleToken).digest('hex');
+  await db.execute('INSERT INTO auth_sessions(token_hash,user_id,expires_at,last_activity_at) VALUES (?,?,?,?)',[idleHash,testUserId,Math.floor(Date.now()/1000)+3600,Math.floor(Date.now()/1000)-601]);
+  await request(app).get('/api/transactions').set('Cookie',`denge_session=${idleToken}`).expect(401);
+  const [sessions]=await db.execute('SELECT token_hash FROM auth_sessions WHERE token_hash=?',[idleHash]);
+  assert.equal(sessions.length,0);
 });
 
 after(async () => {
@@ -183,13 +280,27 @@ test('runs authenticated transaction, statement import, plan, report, settings, 
   assert.equal(importedStatement.body.result.imported, 1);
   const importedTransaction = await primary.get('/api/transactions').expect(200).then(response => response.body.find(item => item.description === importedItem.description));
   assert.ok(importedTransaction);
+  await primary.get('/api/settings').expect(200).expect(response => assert.equal(response.body.allowDuplicateImports, false));
   const duplicatePreview = await primary.post('/api/statements/check').send({ items: [{ transaction_date: importDate, description: importedItem.description, merchant_name: 'Migros', original_amount: 88_888, currency_code: 'TRY', type: 'Expense' }] }).expect(200);
   assert.equal(duplicatePreview.body.items[0].duplicate.kind, 'exact');
-  await primary.post('/api/statements/import').send({ fileSha256: fileHash, fileName: 'private-account-details.csv', skippedCount: 0, items: [importedItem] }).expect(409);
+  const blockedDuplicate = await primary.post('/api/statements/import').send({ fileSha256: fileHash, fileName: 'private-account-details.csv', skippedCount: 0, items: [importedItem] }).expect(201);
+  assert.equal(blockedDuplicate.body.result.imported, 0);
+  assert.equal(blockedDuplicate.body.result.duplicates, 1);
   const importHistory = await primary.get('/api/statements').expect(200);
   assert.equal(importHistory.body[0].file_name, 'Ekstre.csv');
   await primary.get('/api/reports/analysis?from=2026-11-03&to=2026-11-06').expect(200);
   await primary.delete(`/api/transactions/${importedTransaction.id}`).expect(204);
+  const restoredImport = await primary.post('/api/statements/import').send({ fileSha256: fileHash, fileName: 'private-account-details.csv', skippedCount: 0, items: [importedItem] }).expect(201);
+  assert.equal(restoredImport.body.result.imported, 1);
+  await primary.put('/api/settings').send({ allowDuplicateImports: true }).expect(200).expect(response => assert.equal(response.body.allowDuplicateImports, true));
+  const permittedDuplicate = await primary.post('/api/statements/import').send({ fileSha256: fileHash, fileName: 'private-account-details.csv', skippedCount: 0, items: [importedItem] }).expect(201);
+  assert.equal(permittedDuplicate.body.result.imported, 1);
+  await primary.put('/api/settings').send({ allowDuplicateImports: false }).expect(200).expect(response => assert.equal(response.body.allowDuplicateImports, false));
+  const blockedAgain = await primary.post('/api/statements/import').send({ fileSha256: fileHash, fileName: 'private-account-details.csv', skippedCount: 0, items: [importedItem] }).expect(201);
+  assert.equal(blockedAgain.body.result.imported, 0);
+  assert.equal(blockedAgain.body.result.duplicates, 1);
+  const importedTransactions = await primary.get('/api/transactions').expect(200).then(response => response.body.filter(item => item.description === importedItem.description));
+  for (const item of importedTransactions) await primary.delete(`/api/transactions/${item.id}`).expect(204);
 
   const customRuleCheck = await primary.post('/api/statements/check').send({ items: [{ transaction_date: importDate, description: 'Migros sonradan eşleşme', merchant_name: 'Migros', original_amount: 88_889, currency_code: 'TRY', type: 'Expense' }] }).expect(200);
   assert.equal(customRuleCheck.body.items[0].categoryId, expenseCategory);
@@ -271,7 +382,10 @@ test('runs authenticated transaction, statement import, plan, report, settings, 
   const used = await primary.post('/api/transactions').send(tryTransaction({ amount: 120, original_amount: 120, description: 'Kategori FK testi', category_id: customCategory.body.id })).expect(201);
   await primary.delete(`/api/categories/${customCategory.body.id}`).expect(409);
 
-  await primary.put('/api/settings').send({ theme: 'dark' }).expect(200).expect(response => assert.equal(response.body.theme, 'dark'));
+  await primary.put('/api/settings').send({ theme: 'dark' }).expect(200).expect(response => {
+    assert.equal(response.body.theme, 'dark');
+    assert.equal(response.body.allowDuplicateImports, false);
+  });
   await request(app).get('/api/statements').set('Cookie', `denge_session=${otherToken}`).expect(200, []);
   await request(app).get('/api/plans/history').set('Cookie', `denge_session=${otherToken}`).expect(200, []);
   await primary.get('/api/settings').expect(200).expect(response => assert.equal(response.body.theme, 'dark'));
