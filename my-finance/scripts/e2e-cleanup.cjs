@@ -16,6 +16,7 @@ module.exports = async function cleanupMySqlE2eAccount() {
     for (const user of users) {
       const userId = Number(user.id);
       await db.execute('DELETE FROM transactions WHERE user_id=?', [userId]);
+      await db.execute('DELETE FROM calendar_plans WHERE user_id=?', [userId]);
       await db.execute('DELETE FROM categories WHERE user_id=?', [userId]);
       await db.execute('DELETE FROM settings WHERE user_id=?', [userId]);
       await db.execute('DELETE FROM auth_sessions WHERE user_id=?', [userId]);

@@ -22,6 +22,7 @@ const { app, db, migrate } = require('../server/mysql-server.cjs');
 async function cleanupTestUser() {
   if (!testUserId) return;
   await db.execute('DELETE FROM transactions WHERE user_id=?', [testUserId]);
+  await db.execute('DELETE FROM calendar_plans WHERE user_id=?', [testUserId]);
   await db.execute('DELETE FROM categories WHERE user_id=?', [testUserId]);
   await db.execute('DELETE FROM settings WHERE user_id=?', [testUserId]);
   await db.execute('DELETE FROM auth_sessions WHERE user_id=?', [testUserId]);

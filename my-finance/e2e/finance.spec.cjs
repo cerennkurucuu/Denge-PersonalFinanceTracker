@@ -275,3 +275,55 @@ test('mobile layout stays within the viewport and exposes transaction filters', 
   const hasHorizontalPageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(hasHorizontalPageOverflow).toBe(false);
 });
+
+test('financial calendar creates a repeating plan, links an actual payment once, and preserves it after plan removal', async ({page}) => {
+  await page.locator('.sidebar nav button').filter({hasText:'Takvim'}).click();
+  await expect(page.getByRole('heading',{name:'Finansal takvim',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:/Yeni planlanan ödeme/}).click();
+  await page.getByLabel('Plan başlığı',{exact:true}).fill('E2E takvim faturası');
+  await page.getByLabel('Ödeme / gelir türü').selectOption('bill');
+  await page.locator('#calendar-amount').fill('12.50');
+  await page.getByRole('combobox',{name:'Tekrarlama',exact:true}).selectOption('monthly');
+  await page.getByLabel('Kaç ay tekrarlansın?').fill('3');
+  await expect(page.getByText(/Son ödeme:/)).toBeVisible();
+  await page.getByRole('button',{name:'Planı kaydet',exact:true}).click();
+  await expect(page.getByText('Takvim planı kaydedildi. Gerçek gelir/gider kaydı oluşturulmadı.')).toBeVisible();
+  await expect(page.locator('.day-detail .event-row').filter({hasText:'E2E takvim faturası'})).toContainText('Planlanan');
+  await expect(page.locator('.outlook-total > strong')).toContainText('12,50');
+
+  await page.locator('.top-actions .quick-add').click();
+  await page.locator('#transaction-amount').fill('12.50');
+  await page.getByRole('textbox',{name:'Açıklama',exact:true}).fill('E2E takvim gerçek ödeme');
+  await page.getByRole('button',{name:'İşlemi kaydet'}).click();
+  await expect(page.getByText('İşlem eklendi.')).toBeVisible();
+  await page.getByRole('button',{name:'Takvimi yenile',exact:true}).click();
+  const occurrence=page.locator('.day-detail .event-row').filter({hasText:'E2E takvim faturası'});
+  await expect(occurrence).toContainText('eşleşebilecek işlem');
+  await occurrence.getByRole('button',{name:'Gerçekleşen işlemi bağla'}).click();
+  const option=page.locator('#calendar-link-transaction option').filter({hasText:'E2E takvim gerçek ödeme'});
+  await page.locator('#calendar-link-transaction').selectOption(await option.getAttribute('value'));
+  await page.locator('.link-panel').getByRole('button',{name:'Mevcut işlemi bağla',exact:true}).click();
+  await expect(page.getByText('Mevcut işlem bağlandı; yeni gelir/gider kaydı oluşturulmadı.')).toBeVisible();
+  await expect(occurrence).toContainText('Kayıtlı işleme bağlı');
+  await expect(occurrence).toContainText('E2E takvim gerçek ödeme');
+  await expect(page.locator('.calendar-day.selected')).toContainText('bağlı');
+  const transactionCount=async()=> (await (await page.request.get('/api/transactions')).json()).filter(item=>item.description==='E2E takvim gerçek ödeme').length;
+  expect(await transactionCount()).toBe(1);
+
+  const activePlan=page.locator('.plan-management .event-row').filter({hasText:'E2E takvim faturası'});
+  await expect(activePlan).toContainText('3 ay · her ay');
+  await activePlan.getByRole('button',{name:'Düzenle',exact:true}).click();
+  await page.getByLabel('Plan başlığı',{exact:true}).fill('E2E takvim düzenlenmiş plan');
+  await page.getByRole('button',{name:'Planı kaydet',exact:true}).click();
+  const editedPlan=page.locator('.plan-management .event-row').filter({hasText:'E2E takvim düzenlenmiş plan'});
+  await expect(editedPlan).toBeVisible();
+  await expect(occurrence).toContainText('Kayıtlı işleme bağlı');
+  await editedPlan.getByRole('button',{name:'Planı kaldır',exact:true}).click();
+  await page.getByRole('alertdialog').getByRole('button',{name:'Planı kaldır',exact:true}).click();
+  await expect(editedPlan).toHaveCount(0);
+  expect(await transactionCount()).toBe(1);
+  await page.getByRole('button',{name:'Nakit akışı',exact:true}).click();
+  await expect(page.getByText('Yeterli geçmiş yok',{exact:true})).toBeVisible();
+  await page.setViewportSize({width:375,height:812});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth)).toBe(false);
+});
