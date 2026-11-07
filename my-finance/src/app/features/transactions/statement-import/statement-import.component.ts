@@ -6,7 +6,7 @@ import { Category } from '../../../core/models/finance.models';
 import { ExchangeRatesBatchResult, FinanceApiService, StatementCheckResult } from '../../../core/services/finance-api.service';
 import { FinanceFormatService } from '../../../core/services/finance-format.service';
 import { FinanceStoreService } from '../../../core/services/finance-store.service';
-import { ParsedStatement, ParsedStatementItem, StatementKind, StatementParserService } from './statement-parser.service';
+import { ParsedStatement, ParsedStatementItem, StatementParserService } from './statement-parser.service';
 
 @Component({
   selector: 'app-statement-import',
@@ -26,6 +26,10 @@ export class StatementImportComponent {
   private readonly changeDetector = inject(ChangeDetectorRef);
   readonly currencies = ['TRY', 'EUR', 'USD', 'GBP', 'CAD', 'CHF', 'JPY', 'KWD', 'AUD', 'AED', 'CNY'];
 
+  page=0;
+  readonly pageSize=50;
+  get pageRows(): ParsedStatementItem[] { return this.statement?.rows.slice(this.page*this.pageSize,(this.page+1)*this.pageSize) || []; }
+  get pageCount(): number { return Math.ceil((this.statement?.rows.length || 0)/this.pageSize); }
   statement: ParsedStatement | null = null;
   loading = false;
   loadingStep = '';
@@ -43,10 +47,14 @@ export class StatementImportComponent {
   get bulkCategories(): Category[] { return this.categories.filter(category => category.type === this.bulkType); }
   get validRows(): ParsedStatementItem[] { return this.statement?.rows.filter(row => !row.excluded && this.isValid(row)) || []; }
   get reviewRows(): ParsedStatementItem[] { return this.statement?.rows.filter(row => !row.excluded && !this.isValid(row)) || []; }
-  get selectedRows(): ParsedStatementItem[] { return this.validRows.filter(row => row.duplicateKind !== 'exact' && (row.duplicateKind !== 'possible' || row.confirmPotentialDuplicate)); }
+  get selectedRows(): ParsedStatementItem[] {
+    if (this.finance.allowDuplicateImports) return this.validRows;
+    return this.validRows.filter(row => row.duplicateKind !== 'exact' && (row.duplicateKind !== 'possible' || row.confirmPotentialDuplicate));
+  }
   get skippedRows(): number { return this.statement ? this.statement.rows.length - this.selectedRows.length : 0; }
 
   reviewReason(row: ParsedStatementItem): string {
+    if (row.error) return row.error;
     if (!row.transaction_date) return 'Tarih okunamadı.';
     if (!row.description.trim()) return 'Açıklama boş.';
     if (!row.originalAmount || !Number.isSafeInteger(row.originalAmount)) return 'Tutar tanınamadı.';
@@ -58,6 +66,8 @@ export class StatementImportComponent {
   }
 
   goToReviewRow(row: ParsedStatementItem): void {
+    this.page=Math.floor((this.statement?.rows.indexOf(row) || 0)/this.pageSize);
+    this.changeDetector.detectChanges();
     document.getElementById(`statement-row-${row.sourceRow}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
 
@@ -108,6 +118,7 @@ export class StatementImportComponent {
     this.loading = true;
     this.loadingStep = 'Dosya okunuyor…';
     this.statement = null;
+    this.page=0;
     this.error = '';
     this.notice = '';
     this.result = null;
@@ -124,6 +135,8 @@ export class StatementImportComponent {
       await this.checkDuplicatesAndCategories();
     } catch (error) {
       this.error = error instanceof Error ? error.message : 'Ekstre okunamadı.';
+      this.finance.error = this.error;
+      this.finance.notice = '';
       if (this.statement) {
         this.duplicateWarning ||= 'Otomatik kontroller tamamlanamadı. Önizleme korunuyor; satırları gözden geçirip eksik alanları tamamlayabilirsin.';
         this.statement.rows.forEach(row => {
@@ -430,12 +443,22 @@ export class StatementImportComponent {
     }).subscribe({
       next: response => {
         this.result = response.result;
-        this.notice = `İçe aktarıldı: ${response.result.imported} · mükerrer: ${response.result.duplicates} · atlanan: ${response.result.skipped}`;
+        this.finance.error = '';
+        this.notice = response.result.imported === 0 && response.result.duplicates > 0 && !this.finance.allowDuplicateImports
+          ? `${response.result.duplicates} mevcut işlem bulundu. Tekrar eklemek için Ayarlar'dan mükerrer işlemlere izin verebilirsin.`
+          : `İçe aktarıldı: ${response.result.imported} · mükerrer: ${response.result.duplicates} · atlanan: ${response.result.skipped}`;
         this.finance.load();
-        this.finance.notice = `Ekstre işlendi: ${response.result.imported} eklendi, ${response.result.duplicates} mükerrer, ${response.result.skipped} atlandı.`;
+        this.finance.notice = response.result.imported > 0
+          ? `Ekstre işlendi: ${response.result.imported} eklendi, ${response.result.duplicates} mükerrer, ${response.result.skipped} atlandı.`
+          : this.notice;
         this.imported.emit();
       },
-      error: response => { this.error = response.error?.error || 'Ekstre kaydedilemedi; işlemler veritabanına eklenmedi.'; },
+      error: response => {
+        this.saving = false;
+        this.error = response.error?.error || 'Ekstre kaydedilemedi; işlemler veritabanına eklenmedi.';
+        this.finance.error = this.error;
+        this.finance.notice = '';
+      },
       complete: () => this.saving = false,
     });
   }

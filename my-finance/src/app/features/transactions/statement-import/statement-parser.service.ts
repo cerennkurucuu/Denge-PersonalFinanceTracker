@@ -44,9 +44,10 @@ export interface ParsedStatement {
 }
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_ROWS = 1000;
+const MAX_ROWS = 10000;
 const PDF_MAX_PAGES = 100;
 const CURRENCY_CODES = ['TRY', 'USD', 'EUR', 'GBP', 'CAD', 'CHF', 'JPY', 'KWD', 'AUD', 'AED', 'CNY'] as const;
+const CURRENCY_DIGITS = new Map<string, number>();
 const DATE_HEADER = ['tarih', 'islem tarihi', 'transaction date', 'date', 'value date', 'valör'];
 const DESCRIPTION_HEADER = ['aciklama', 'islem aciklamasi', 'description', 'merchant', 'is yeri', 'transaction', 'hareket'];
 const AMOUNT_HEADER = ['tutar', 'amount', 'islem tutari', 'transaction amount'];
@@ -61,7 +62,7 @@ const REFERENCE_HEADER = ['referans', 'reference', 'transaction id', 'islem no']
 
 function fold(value: unknown): string {
   return String(value ?? '').trim().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/[ıİ]/g, 'i').toLocaleLowerCase('tr-TR').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    .replace(/[ıİ]/g, 'i').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
 function dateValue(value: unknown): string | null {
@@ -91,6 +92,7 @@ function currencyCode(value: unknown, amountText: string): string {
 function parseAmount(value: unknown, preferredCurrency = 'TRY'): { minor: number | null; negative: boolean; currency: string; text: string } {
   const text = String(value ?? '').trim();
   if (!text) return { minor: null, negative: false, currency: 'TRY', text };
+  if (/^\d{1,4}[./-]\d{1,2}[./-]\d{2,4}$/.test(text)) return { minor: null, negative: false, currency: 'TRY', text };
   const negative = /^\s*(?:-|\()\s*\d/.test(text) || /\b(BORC|DEBIT|OUT)\b/i.test(text);
   const digits = text.replace(/\b(?:TRY|TL|USD|EUR|GBP|CAD|CHF|JPY|KWD|AUD|AED|CNY)\b/gi, '').replace(/[₺€$£\s()]/g, '').replace(/-/g, '');
   let normalized = digits;
@@ -108,7 +110,8 @@ function parseAmount(value: unknown, preferredCurrency = 'TRY'): { minor: number
   }
   if (!/^\d+(?:\.\d+)?$/.test(normalized)) return { minor: null, negative, currency: currencyCode('', text), text };
   const code = currencyCode(preferredCurrency, text);
-  const fractionDigits = new Intl.NumberFormat('en', { style: 'currency', currency: code }).resolvedOptions().maximumFractionDigits ?? 2;
+  if (!CURRENCY_DIGITS.has(code)) CURRENCY_DIGITS.set(code, new Intl.NumberFormat('en', { style: 'currency', currency: code }).resolvedOptions().maximumFractionDigits ?? 2);
+  const fractionDigits = CURRENCY_DIGITS.get(code)!;
   const [whole, fraction = ''] = normalized.split('.');
   if (fraction.length > fractionDigits && /[1-9]/.test(fraction.slice(fractionDigits))) return { minor: null, negative, currency: code, text };
   const minor = Number(BigInt(whole) * (10n ** BigInt(fractionDigits)) + BigInt(fraction.slice(0, fractionDigits).padEnd(fractionDigits, '0') || '0'));
@@ -166,7 +169,7 @@ function createItem(sourceRow: number, date: unknown, descriptionValue: unknown,
     needsReview: !parsedDate || minor === null || !type,
     reference: String(options.reference ?? '').slice(0, 80),
     excluded: entryKind === 'transfer' || entryKind === 'card_payment',
-    error: !parsedDate ? 'Tarih tanınamadı.' : minor === null ? 'Tutar tanınamadı.' : !type ? 'Gelir/gider yönünü onayla.' : '',
+    error: !parsedDate ? `Satır ${sourceRow} · Tarih alanı geçersiz: ${String(date ?? '').slice(0, 30)}. GG.AA.YYYY veya YYYY-AA-GG kullan.` : minor === null ? `Satır ${sourceRow} · Tutar alanı geçersiz: ${String(amountValue ?? '').slice(0, 30)}. Örnek: -1.234,50. Tarih veya bakiye sütununu tutar olarak kullanma.` : !description ? `Satır ${sourceRow} · Açıklama boş.` : !type ? `Satır ${sourceRow} · Gelir/gider yönünü onayla.` : '',
     amountText: String(amountValue ?? ''),
     amount: 0,
     exchange_rate: parsedCurrency === 'TRY' ? 1 : '',
@@ -190,19 +193,23 @@ function parseDelimited(text: string): string[][] {
   let row: string[] = [];
   let cell = '';
   let quoted = false;
+  let sourceLine = 1;
+  let quoteStartLine = 1;
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
+    if (char === '\n') sourceLine += 1;
     if (char === '"' && quoted && text[index + 1] === '"') { cell += '"'; index += 1; }
-    else if (char === '"') quoted = !quoted;
+    else if (char === '"') { if (!quoted) quoteStartLine = sourceLine; quoted = !quoted; }
     else if (char === delimiter && !quoted) { row.push(cell); cell = ''; }
     else if ((char === '\n' || char === '\r') && !quoted) {
-      if (char === '\r' && text[index + 1] === '\n') index += 1;
+      if (char === '\r' && text[index + 1] === '\n') { index += 1; sourceLine += 1; }
       row.push(cell); cell = '';
-      if (row.some(value => value.trim())) rows.push(row);
+      rows.push(row);
       row = [];
-      if (rows.length > MAX_ROWS + 10) throw new Error('Ekstre 1000 satır sınırını aşıyor.');
+      if (rows.length > MAX_ROWS + 100) throw new Error('Ekstre 10000 satır sınırını aşıyor.');
     } else cell += char;
   }
+  if (quoted) throw new Error(`Satır ${quoteStartLine} · CSV alanında açılan çift tırnak kapatılmamış. Bu satırın tırnaklarını kontrol et.`);
   row.push(cell);
   if (row.some(value => value.trim())) rows.push(row);
   return rows;
@@ -218,7 +225,7 @@ function matchesHeader(value: unknown, aliases: string[]): boolean {
 }
 
 function hasTransactionHeader(rows: unknown[][]): boolean {
-  return rows.slice(0, 15).some(row => {
+  return rows.slice(0, 100).some(row => {
     const headers = row.map(String);
     return headerIndex(headers, DATE_HEADER) >= 0
       && headerIndex(headers, DESCRIPTION_HEADER) >= 0
@@ -228,10 +235,10 @@ function hasTransactionHeader(rows: unknown[][]): boolean {
 
 function parseRows(rows: unknown[][]): { parsed: ParsedStatementItem[]; warnings: string[] } {
   const warnings: string[] = [];
-  const data = rows.map(row => row.map(cell => cell instanceof Date ? cell : String(cell ?? '').trim())).filter(row => row.some(value => String(value).trim()));
+  const data = rows.map(row => row.map(cell => cell instanceof Date || typeof cell === 'number' ? cell : String(cell ?? '').trim()));
   let headerRow = -1;
   let indices: { date: number; description: number; amount: number; debit: number; credit: number; currency: number; direction: number; merchant: number; reference: number; category: number } = { date: -1, description: -1, amount: -1, debit: -1, credit: -1, currency: -1, direction: -1, merchant: -1, reference: -1, category: -1 };
-  for (let index = 0; index < Math.min(data.length, 15); index += 1) {
+  for (let index = 0; index < Math.min(data.length, 100); index += 1) {
     const headers = data[index].map(String);
       const candidate: typeof indices = {
       date: headerIndex(headers, DATE_HEADER), description: headerIndex(headers, DESCRIPTION_HEADER), amount: headerIndex(headers, AMOUNT_HEADER),
@@ -243,8 +250,15 @@ function parseRows(rows: unknown[][]): { parsed: ParsedStatementItem[]; warnings
   }
   const parsed: ParsedStatementItem[] = [];
   if (headerRow >= 0) {
+    const nonTransactionRows: number[] = [];
+    warnings.push(`İşlem başlıkları dosyanın ${headerRow + 1}. satırında bulundu; satır numaraları kaynak dosyaya göredir.`);
     for (let index = headerRow + 1; index < data.length; index += 1) {
       const row = data[index];
+      if (!row.some(value => String(value).trim())) continue;
+      if (!dateValue(row[indices.date]) && !String(row[indices.description] ?? '').trim() && /^(?:taraflar\b|merkez\b|ticaret sicil\b|www\b|borc\b|alacak\b)/.test(fold(row.join(' ')))) {
+        nonTransactionRows.push(index + 1);
+        continue;
+      }
       if (row.length === 1 && /^(?:tarih araligi|hesap özeti|account statement|bakiye|opening balance|closing balance)/i.test(String(row[0]))) continue;
       parsed.push(createItem(index + 1, row[indices['date']], row[indices['description']], indices['amount'] >= 0 ? row[indices['amount']] : row[indices['debit']] || row[indices['credit']], {
         currency: indices['currency'] >= 0 ? row[indices['currency']] : undefined,
@@ -255,14 +269,17 @@ function parseRows(rows: unknown[][]): { parsed: ParsedStatementItem[]; warnings
         debit: indices['debit'] >= 0 ? row[indices['debit']] : undefined,
         credit: indices['credit'] >= 0 ? row[indices['credit']] : undefined,
       }));
-      if (parsed.length > MAX_ROWS) throw new Error('Ekstre 1000 işlem sınırını aşıyor.');
+      if (parsed.length > MAX_ROWS) throw new Error('Ekstre 10000 işlem sınırını aşıyor.');
     }
+    if (nonTransactionRows.length) warnings.push(`İşlem olmayan özet/bilgilendirme satırları içe alınmadı: ${nonTransactionRows.join(', ')}.`);
   } else {
     for (let index = 0; index < data.length; index += 1) {
       const row = data[index];
       const dateColumn = row.findIndex(value => dateValue(value));
       if (dateColumn < 0) continue;
-      const amountColumn = row.findIndex(value => parseAmount(value).minor !== null);
+      const amountColumns = row.map((value, column) => ({ value, column })).filter(({ value, column }) => column !== dateColumn && !dateValue(value) && parseAmount(value).minor !== null);
+      if (amountColumns.length !== 1) continue;
+      const amountColumn = amountColumns[0].column;
       if (amountColumn < 0) continue;
       const description = row.map(String).filter((_, column) => column !== dateColumn && column !== amountColumn).join(' ').trim();
       if (!description) continue;
@@ -270,8 +287,8 @@ function parseRows(rows: unknown[][]): { parsed: ParsedStatementItem[]; warnings
     }
     if (parsed.length) warnings.push('Sütun başlıkları bulunamadı; satırlar otomatik tanındı. Gelir/gider yönünü ve eşleşmeleri onayla.');
   }
-  if (!parsed.length) throw new Error('İşlem satırları okunamadı. Bu banka düzeni otomatik tanınmıyor; CSV veya Excel biçimine dönüştürüp tekrar dene.');
-  if (parsed.length > MAX_ROWS) throw new Error('Ekstre 1000 işlem sınırını aşıyor.');
+  if (!parsed.length) throw new Error(headerRow >= 0 ? `Başlık satırı ${headerRow + 1} tanındı, ancak altında işlem satırı yok.` : 'İlk 100 satırda Tarih, Açıklama ve Tutar / İşlem Tutarı başlıkları birlikte bulunamadı. Dosya bozuk olmayabilir; sütun başlıklarını kontrol et. Başlıksız satırlarda tutar ile bakiye güvenle ayrılamadığı için kayıt oluşturulmadı.');
+  if (parsed.length > MAX_ROWS) throw new Error('Ekstre 10000 işlem sınırını aşıyor.');
   return { parsed, warnings };
 }
 
@@ -330,7 +347,7 @@ export function extractPdfTableRows(pages: PdfLine[][]): { rows: unknown[][]; mi
         continue;
       }
       rows.push([date, description, category, amount]);
-      if (rows.length > MAX_ROWS) throw new Error('Ekstre 1000 işlem sınırını aşıyor.');
+      if (rows.length > MAX_ROWS) throw new Error('Ekstre 10000 işlem sınırını aşıyor.');
     }
   }
   return { rows: [['Tarih', 'Açıklama', 'Kategori', 'Tutar'], ...rows], missedRows, foundTable };
@@ -366,12 +383,12 @@ export class StatementParserService {
     } else if (format === 'XLS' || format === 'XLSX') {
       let workbook: XLSXTypes.WorkBook;
       const XLSX = await import('xlsx');
-      try { workbook = XLSX.read(bytes, { type: 'array', cellDates: true, WTF: true, sheetRows: MAX_ROWS + 10 }); }
-      catch { throw new Error('Excel dosyası bozuk, şifreli veya desteklenmeyen bir içerik taşıyor. Dosyayı Excel’de açıp yeni bir XLSX olarak kaydet.'); }
+      try { workbook = XLSX.read(bytes, { type: 'array', cellDates: false, WTF: false, sheetRows: MAX_ROWS + 10 }); }
+      catch (error) { const reason = error instanceof Error ? error.message.slice(0, 160) : 'Bilinmeyen okuma hatası'; throw new Error(`Excel çalışma kitabı açılamadı: ${reason}. İşlem satırlarına erişilemediği için satır numarası belirlenemedi.`); }
       if (!workbook.SheetNames.length) throw new Error('Excel dosyasında sayfa bulunamadı.');
       const sheets = workbook.SheetNames.map(name => ({
         name,
-        rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: true, defval: '' }) as unknown[][],
+        rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: true, blankrows: true, defval: '' }) as unknown[][],
       }));
       const transactionSheet = sheets.find(sheet => hasTransactionHeader(sheet.rows));
       if (!transactionSheet) throw new Error('Excel sayfalarında Tarih, Açıklama ve Tutar başlıklarıyla eşleşen bir işlem tablosu bulunamadı. Başlıkları içe aktarma tablosuna göre düzenleyip tekrar dene.');

@@ -5,6 +5,38 @@ describe('StatementParserService', () => {
 
   beforeEach(() => parser = new StatementParserService());
 
+  it('identifies the source line of an unclosed CSV quote', async () => {
+    const file=new File(['Tarih;Açıklama;Tutar\n06.11.2026;"Kapanmayan alan;10,00\n'],'broken.csv',{type:'text/csv'});
+    await expectAsync(parser.parse(file)).toBeRejectedWithError(/Satır 2.*çift tırnak/);
+  });
+
+  it('recognizes Turkish capital İ in İşlem Tutarı and preserves source row numbers including blanks', async () => {
+    const file=new File([',,,,\n,,,,\nTarih,Fiş No,Açıklama,İşlem Tutarı,Bakiye\n06.11.2026,123,Market,"-8,37","100,00"\nbozuk,124,Market,"-9,50","90,50"\nwww.banka.example,,,,\n'],'headers.csv',{type:'text/csv'});
+    const result=await parser.parse(file);
+    expect(result.rows.length).toBe(2);
+    expect(result.rows[0].sourceRow).toBe(4);
+    expect(result.rows[0].originalAmount).toBe(837);
+    expect(result.rows[1].error).toContain('Satır 5 · Tarih');
+    expect(result.warnings.join(' ')).toContain('6');
+  });
+
+  it('reads raw Excel values with a nonstandard display format without labeling the workbook corrupt', async () => {
+    const X=await import('xlsx');
+    const sheet=X.utils.aoa_to_sheet([['Tarih','Açıklama','İşlem Tutarı','Bakiye'],[46332,'Market',-8.37,100]]);
+    sheet['C2'].z='#,##0.##';
+    const book=X.utils.book_new();X.utils.book_append_sheet(book,sheet,'Hareketler');
+    const file=new File([X.write(book,{type:'array',bookType:'xlsx'})],'format.xlsx');
+    const result=await parser.parse(file);
+    expect(result.rows[0].originalAmount).toBe(837);
+    expect(result.rows[0].transaction_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('rejects dates in amount cells and ambiguous headerless date/amount/balance rows', async () => {
+    expect(parser.parseAmountInput('31.10.2026', 'TRY')).toBeNull();
+    const file = new File(['31.10.2026;Market;125,00;875,00\n'], 'unknown.csv', { type: 'text/csv' });
+    await expectAsync(parser.parse(file)).toBeRejected();
+  });
+
   it('parses Turkish CSV amounts, directions, dates and removes long account numbers', async () => {
     const file = new File([
       'Tarih;Açıklama;Tutar;Para Birimi;Yön;İşyeri\n'

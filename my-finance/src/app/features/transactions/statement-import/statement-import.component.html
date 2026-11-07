@@ -9,7 +9,7 @@
       <div class="file-drop" [class.busy]="loading" [class.drag-over]="dragActive" (dragenter)="dragEnter($event)" (dragover)="dragOver($event)" (dragleave)="dragLeave($event)" (drop)="fileDropped($event)">
         <span class="file-mark" aria-hidden="true">↥</span>
         <strong>{{ loading ? loadingStep : dragActive ? 'Dosyayı buraya bırak' : 'Ekstreni içe aktar' }}</strong>
-        <p>CSV, XLS, XLSX veya metin tabanlı PDF · en fazla 10 MB ve 1000 işlem</p>
+        <p>CSV, XLS, XLSX veya metin tabanlı PDF · en fazla 10 MB ve 10000 işlem</p>
         <input #fileInput id="statement-file" class="file-select-input" type="file" accept=".csv,.xls,.xlsx,.pdf,text/csv,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" [disabled]="loading" (change)="fileChanged($event)" aria-label="Banka ekstresi dosyası seç">
         <span class="drop-hint">veya dosyanı buraya sürükleyip bırak</span>
       </div>
@@ -28,7 +28,7 @@
           <strong>{{ reviewRows.length }} satır kontrol bekliyor</strong>
           <p>Her satırın neden beklediğini görmek ve doğrudan o satıra gitmek için seç.</p>
           <ul>
-            @for (row of reviewRows; track row.sourceRow) {
+            @for (row of reviewRows.slice(0, 50); track row.sourceRow) {
               <li><button type="button" (click)="goToReviewRow(row)">Satır {{ row.sourceRow }} · {{ row.description || 'Açıklama yok' }}</button><span>{{ reviewReason(row) }}</span></li>
             }
           </ul>
@@ -69,11 +69,12 @@
       </section>
       <p class="rules-note">Transfer ve kredi kartı borç ödemeleri harcama toplamına eklenmez. İadeler, bağlı kategorinin net giderini azaltır. Benzer kayıtlar otomatik silinmez; karar senin.</p>
 
+      <div class="preview-counts"><button type="button" class="outline-button" [disabled]="page===0" (click)="page=page-1">Önceki</button><span>Sayfa {{page+1}} / {{pageCount}} · sayfada en fazla 50 satır</span><button type="button" class="outline-button" [disabled]="page+1>=pageCount" (click)="page=page+1">Sonraki</button></div>
       <div class="preview-scroll">
         <table class="preview-table">
           <thead><tr><th>İŞLEM</th><th>TUTAR VE KUR</th><th>TÜR / KAYIT</th><th>KATEGORİ</th><th>DURUM</th></tr></thead>
           <tbody>
-            @for (row of statement.rows; track row.sourceRow) {
+            @for (row of pageRows; track row.sourceRow) {
               <tr [attr.id]="'statement-row-' + row.sourceRow" [class.row-excluded]="row.excluded" [class.row-invalid]="!row.excluded && !isValid(row)">
                 <td class="detail-cell">
                   <label class="mini-label" [for]="'statement-date-' + row.sourceRow">Tarih</label>
@@ -113,8 +114,15 @@
                   @if (row.merchant_name) { <label class="learn-rule"><input type="checkbox" [(ngModel)]="row.learnMerchant"> Sonraki benzer işlemde hatırla</label> }
                 </td>
                 <td class="status-cell">
-                  @if (row.duplicateKind === 'exact') { <span class="status-tag duplicate">Aynısı kayıtlı</span><small>{{ row.duplicateDescription }}</small> }
-                  @else if (row.duplicateKind === 'possible') { <span class="status-tag possible">Benzer kayıt var</span><small>{{ row.duplicateDescription }}</small><label class="confirm-duplicate"><input type="checkbox" [(ngModel)]="row.confirmPotentialDuplicate"> Yine de ekle</label> }
+                  @if (row.duplicateKind === 'exact') {
+                    <span class="status-tag duplicate">{{ finance.allowDuplicateImports ? 'Tekrar eklemeye izinli' : 'Aynısı kayıtlı' }}</span>
+                    <small>{{ row.duplicateDescription }}{{ finance.allowDuplicateImports ? ' · Ayar açık olduğu için bu satır eklenecek.' : '' }}</small>
+                  }
+                  @else if (row.duplicateKind === 'possible') {
+                    <span class="status-tag possible">{{ finance.allowDuplicateImports ? 'Benzer kayıt · izinli' : 'Benzer kayıt var' }}</span>
+                    <small>{{ row.duplicateDescription }}</small>
+                    @if (!finance.allowDuplicateImports) { <label class="confirm-duplicate"><input type="checkbox" [(ngModel)]="row.confirmPotentialDuplicate"> Yine de ekle</label> }
+                  }
                   @else if (row.excluded) { <span class="status-tag excluded">Dışarıda</span><button type="button" class="include-button" (click)="toggleIncluded(row)">Dahil et</button> }
                   @else if (!isValid(row)) { <span class="status-tag invalid">Düzeltme gerekli</span><small>{{ row.error || 'Alanları kontrol et.' }}</small>@if (row.needsReview) { <button type="button" class="include-button" (click)="confirmRow(row)">Satırı kontrol ettim</button> } }
                   @else { <span class="status-tag ready">Hazır</span> }
