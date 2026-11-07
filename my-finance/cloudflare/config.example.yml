@@ -1,0 +1,8 @@
+# Example for a named Cloudflare Tunnel. Never commit the real credentials file.
+tunnel: <TUNNEL_UUID>
+credentials-file: C:/path/to/cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: finance.example.com
+    service: http://127.0.0.1:3000
+  - service: http_status:404

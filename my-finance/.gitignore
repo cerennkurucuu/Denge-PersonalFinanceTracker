@@ -41,6 +41,8 @@ yarn-error.log
 *.sqlite-wal
 .env*
 !.env.example
+/cloudflare/*.json
+/cloudflare/*.pem
 /libpeerconnection.log
 testem.log
 /typings
