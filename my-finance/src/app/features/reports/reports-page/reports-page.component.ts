@@ -1,3 +1,4 @@
+import { Subscription } from 'rxjs';
 import { CommonModule } from '@angular/common';
 import { AfterViewChecked, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject, ChangeDetectionStrategy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -22,6 +23,29 @@ export class ReportsPageComponent implements OnInit, AfterViewChecked, OnDestroy
   private readonly charts = inject(FinanceChartService);
   readonly availableYears = Array.from({ length: 6 }, (_, index) => new Date().getFullYear() - index);
   readonly today = this.format.currentDateForToday;
+  private totalRequests: Partial<Record<'Income' | 'Expense', Subscription>> = {};
+  private analysisRequest?: Subscription;
+  totalErrors = {Income:false,Expense:false};
+  totalIssues = 0;
+  totalIssuesByType = {Income:0,Expense:0};
+  totalLoading = {Income:false,Expense:false};
+  totals: {Income:number|null;Expense:number|null} = {Income:null,Expense:null};
+  refreshTotal(type: 'Income' | 'Expense'): void {
+    const from=this.finance.reportFrom,to=this.finance.reportTo;
+    if (!from || !to || from>to) return;
+    this.totalRequests[type]?.unsubscribe();
+    this.totalLoading[type]=true; this.totalErrors[type]=false;
+    this.totalRequests[type]=this.api.getReportTotal(type,from,to).subscribe({
+      next: result => {
+        if (from===this.finance.reportFrom && to===this.finance.reportTo) {
+          this.totals[type]=result.amount; this.totalIssuesByType[type]=result.issues;
+          this.totalIssues=this.totalIssuesByType.Income+this.totalIssuesByType.Expense;
+        }
+        this.totalLoading[type]=false;
+      },
+      error: response => {this.totalErrors[type]=true;this.totalLoading[type]=false;this.finance.error=response.error?.error || 'Rapor hesaplanamadı.';},
+    });
+  }
   analysis: FinancialAnalysis | null = null;
   analysisLoading = false;
   analysisError = '';
@@ -42,10 +66,9 @@ export class ReportsPageComponent implements OnInit, AfterViewChecked, OnDestroy
 
   ngOnInit(): void {
     if (this.finance.reportTo > this.today) this.finance.reportTo = this.today;
+    this.refreshTotal('Income'); this.refreshTotal('Expense');
     this.loadAnalysis();
-    this.loadPreferences();
-    this.loadPlan();
-    this.api.getPlanHistory().subscribe({ next: history => this.planHistory = history, error: () => this.planHistory = [] });
+
   }
 
   ngAfterViewChecked(): void {
@@ -54,15 +77,18 @@ export class ReportsPageComponent implements OnInit, AfterViewChecked, OnDestroy
 
   ngOnDestroy(): void {
     this.charts.destroy('report');
+    Object.values(this.totalRequests).forEach(request => request?.unsubscribe());
+    this.analysisRequest?.unsubscribe();
   }
 
   yearChanged(): void {
     this.finance.setReportYear(this.finance.reportYear);
+    this.refreshTotal('Income'); this.refreshTotal('Expense');
     if (this.finance.reportTo > this.today) this.finance.reportTo = this.today;
     this.loadAnalysis();
   }
 
-  dateRangeChanged(): void { this.loadAnalysis(); }
+  dateRangeChanged(): void { this.totals={Income:null,Expense:null};this.refreshTotal('Income');this.refreshTotal('Expense');this.loadAnalysis(); }
 
   get analysisCategories(): Array<{ name: string; amount: number }> {
     const categories = this.analysis?.categories || [];
@@ -97,10 +123,20 @@ export class ReportsPageComponent implements OnInit, AfterViewChecked, OnDestroy
     if (!from || !to || from > to || to > this.today) { this.analysis = null; this.analysisError = 'Analiz için bugünü aşmayan geçerli bir tarih aralığı seç.'; return; }
     this.analysisLoading = true;
     this.analysisError = '';
-    this.api.getFinancialAnalysis(from, to).subscribe({
+    this.analysisRequest?.unsubscribe();
+    this.analysisRequest=this.api.getFinancialAnalysis(from, to).subscribe({
       next: result => { this.analysis = result; this.analysisLoading = false; },
       error: response => { this.analysis = null; this.analysisError = response.error?.error || 'Finansal analiz alınamadı.'; this.analysisLoading = false; },
     });
+  }
+
+  private planOpened=false;
+  openPlanTab(): void {
+    this.analysisTab='plan';
+    if (this.planOpened) return;
+    this.planOpened=true;
+    this.loadPreferences(); this.loadPlan();
+    this.api.getPlanHistory().subscribe({next: history => this.planHistory=history,error: () => this.planHistory=[]});
   }
 
   private loadPreferences(): void {
@@ -111,7 +147,7 @@ export class ReportsPageComponent implements OnInit, AfterViewChecked, OnDestroy
           protectedInput: this.format.formatMinorUnits(item.protectedAmount, 'TRY'),
           reductionInput: String(item.reductionRate * 100),
         }));
-        if (this.preferences.length) this.calculateScenarios();
+
       },
       error: response => this.planError = response.error?.error || 'Kategori plan ayarları alınamadı.',
     });

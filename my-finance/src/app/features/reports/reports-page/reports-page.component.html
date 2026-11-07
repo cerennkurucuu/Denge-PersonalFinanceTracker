@@ -16,10 +16,11 @@
     <label class="year-select" for="report-to">Bitiş tarihi
       <input id="report-to" type="date" [(ngModel)]="finance.reportTo" (change)="dateRangeChanged()" aria-label="Rapor bitiş tarihi">
     </label>
-    <button class="outline-button report-export" type="button" [disabled]="!finance.reportDateRangeValid" (click)="finance.exportReportCsv()">↓ Raporu CSV indir</button>
+    <button class="outline-button report-export" type="button" [disabled]="!finance.reportDateRangeValid || totalIssues>0 || totalLoading.Income || totalLoading.Expense || totalErrors.Income || totalErrors.Expense" (click)="finance.exportReportCsv()">↓ Raporu CSV indir</button>
   </div>
 </header>
-
+@if(totalIssues>0){<p class="filter-error" role="alert">{{totalIssues}} içe aktarılmış kayıtta tutar alanına tarih yazılmış olabileceği tespit edildi. Yanıltıcı raporları durdurduk. Kaynak ekstreyle doğrulama ve kayıt düzeltmesi gerekli; yeniden hesaplama mevcut hatalı veriyi değiştirmez.</p>}
+@if(totalIssues===0 && !totalLoading.Income && !totalLoading.Expense && !totalErrors.Income && !totalErrors.Expense){
 @if (!finance.reportDateRangeValid) {
   <p class="filter-error" role="alert">Başlangıç tarihi, bitiş tarihinden sonra olamaz.</p>
 }
@@ -27,17 +28,19 @@
 <section class="report-summary" aria-label="Seçili tarih aralığının finans özeti">
   <article class="metric-card" aria-labelledby="annual-income-title">
     <h2 id="annual-income-title" class="metric-label">Dönem geliri <span class="metric-symbol income-symbol" aria-hidden="true">↙</span></h2>
-    <p class="metric-value">{{ format.formatAmount(finance.reportIncome) }}</p>
+    <p class="metric-value">{{ format.formatAmount(totals.Income ?? finance.reportIncome) }}</p>
     <p class="metric-foot">Seçili tarih aralığı</p>
+    <button class="icon-button report-refresh" type="button" [disabled]="totalLoading.Income" (click)="refreshTotal('Income')" [attr.aria-label]="totalLoading.Income ? 'Gelir yeniden hesaplanıyor' : 'Gelir raporunu yenile'" [title]="totalLoading.Income ? 'Gelir yeniden hesaplanıyor' : 'Gelir raporunu yenile'">↻</button>
   </article>
   <article class="metric-card" aria-labelledby="annual-expense-title">
     <h2 id="annual-expense-title" class="metric-label">Dönem gideri <span class="metric-symbol expense-symbol" aria-hidden="true">↗</span></h2>
-    <p class="metric-value">{{ format.formatAmount(finance.reportExpense) }}</p>
+    <p class="metric-value">{{ format.formatAmount(totals.Expense ?? finance.reportExpense) }}</p>
     <p class="metric-foot">Seçili tarih aralığı</p>
+    <button class="icon-button report-refresh" type="button" [disabled]="totalLoading.Expense" (click)="refreshTotal('Expense')" [attr.aria-label]="totalLoading.Expense ? 'Gider yeniden hesaplanıyor' : 'Gider raporunu yenile'" [title]="totalLoading.Expense ? 'Gider yeniden hesaplanıyor' : 'Gider raporunu yenile'">↻</button>
   </article>
   <article class="metric-card savings-metric" aria-labelledby="annual-savings-title">
     <h2 id="annual-savings-title" class="metric-label">Net birikim <span class="metric-symbol savings-symbol" aria-hidden="true">✳</span></h2>
-    <p class="metric-value" [class.negative-value]="finance.reportSavings < 0">{{ format.formatAmount(finance.reportSavings) }}</p>
+    <p class="metric-value" [class.negative-value]="finance.reportSavings < 0">{{ format.formatAmount((totals.Income ?? finance.reportIncome) - (totals.Expense ?? finance.reportExpense)) }}</p>
     <p class="metric-foot">Dönem gelir ve gider farkı</p>
   </article>
 </section>
@@ -97,7 +100,7 @@
   <nav class="analysis-tabs" aria-label="Finansal değerlendirme bölümleri">
     <button type="button" [class.active]="analysisTab === 'overview'" (click)="analysisTab = 'overview'">Özet</button>
     <button type="button" [class.active]="analysisTab === 'habits'" (click)="analysisTab = 'habits'">Harcama alışkanlıkları</button>
-    <button type="button" [class.active]="analysisTab === 'plan'" (click)="analysisTab = 'plan'">Kişisel plan</button>
+    <button type="button" [class.active]="analysisTab === 'plan'" (click)="openPlanTab()">Kişisel plan</button>
   </nav>
 
   @if (analysisLoading) { <div class="analysis-empty" role="status">Finansal hareketler inceleniyor…</div> }
@@ -217,3 +220,5 @@
     }
   }
 </section>
+
+}
