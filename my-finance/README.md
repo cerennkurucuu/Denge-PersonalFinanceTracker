@@ -173,6 +173,19 @@ Google ID token ve kur hesaplama birim testleri Node test runner’ı, MySQL API
 
 ![Denge mobil işlem ekranı](docs/screenshots/transactions-mobile.png)
 
+## Tanıtım sayfası ve kullanım kılavuzları
+
+Oturum açılmadığında `/` adresinde Denge tanıtım sayfası açılır. Özellikler, başlangıç adımları, sık sorulan sorular ve KVKK/gizlilik bilgilendirmesi bulunur. “Programa giriş” mevcut Google OAuth giriş ekranını açar; finans uygulamasına erişim yine doğrulanmış oturum gerektirir.
+
+İlk başarılı girişte kullanıcı başına bir kez, atlanabilir ürün turu gösterilir. Tur üst menüdeki `?` yardım düğmesinden yeniden başlatılabilir. Aynı düğme her uygulama ekranında o sayfaya özel GIF animasyonunu, kısa kullanım adımlarını ve ayrıntılı yazılı kılavuz bağlantısını açar.
+
+- Tanıtım ve SSS: uygulamanın `/` sayfası
+- Ekran kılavuzları: [`public/guides/index.html`](public/guides/index.html)
+- GIF anlatımları: `public/assets/guides/`
+- KVKK/gizlilik metni: [`public/guides/privacy.html`](public/guides/privacy.html)
+
+KVKK metni uygulamanın bugünkü davranışını açıklayan bir taslaktır. Yayın öncesinde veri sorumlusunun resmî kimliği ve iletişim kanalı, her veri kategorisinin hukuki sebebi, hizmet sağlayıcı/alıcı grupları ve sunucu konumları ile saklama süreleri ürün sahibi tarafından doğrulanıp kesinleştirilmelidir. KVKK aydınlatması; veri sorumlusunun kimliği, işleme amacı, aktarım, toplama yöntemi/hukuki sebep ve ilgili kişi haklarını kapsamalıdır ([KVKK Kurumu](https://www.kvkk.gov.tr/Icerik/2033/Aydinlatma-Yukumlulugu-)).
+
 ## Proje yapısı
 
 ```text
