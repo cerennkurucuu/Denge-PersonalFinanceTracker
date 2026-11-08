@@ -18,6 +18,7 @@ export class TopbarComponent {
   @Output() themeToggle = new EventEmitter<void>();
   @Output() newTransaction = new EventEmitter<void>();
   @Output() signOut = new EventEmitter<void>();
+  @Output() help = new EventEmitter<void>();
 
   get pageTitle(): string {
     return { dashboard: 'Genel Bakış', transactions: 'İşlemler', plans: 'Planlarım', cashflow: 'Nakit Akışı', calendar: 'Finansal Takvim', reports: 'Raporlar', categories: 'Kategoriler', settings: 'Ayarlar' }[this.active];

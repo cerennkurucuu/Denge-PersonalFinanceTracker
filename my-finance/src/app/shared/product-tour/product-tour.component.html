@@ -1,0 +1,7 @@
+<div class="tour-backdrop" role="presentation">
+  <section class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+    <button class="tour-close icon-button" type="button" aria-label="Turu kapat" (click)="closeTour()">×</button>
+    <div class="tour-visual"><span class="brand-mark" role="img" aria-label="Denge"></span><div class="tour-visual-lines"><i></i><i></i><i></i><i></i></div><b>{{step.page==='dashboard'?'₺':step.page==='transactions'?'↕':step.page==='plans'?'☷':step.page==='calendar'?'▦':step.page==='cashflow'?'⌁':'▥'}}</b></div>
+    <div class="tour-copy"><span class="eyebrow">{{step.eyebrow}}</span><h2 id="tour-title">{{step.title}}</h2><p>{{step.body}}</p><div class="tour-progress" [attr.aria-label]="(index+1)+' / '+steps.length"><i *ngFor="let item of steps;let i=index" [class.current]="i===index" [class.done]="i<index"></i></div><footer><button class="text-button" type="button" [disabled]="index===0" (click)="back()">← Geri</button><span>{{index+1}} / {{steps.length}}</span><div><button class="text-button" type="button" (click)="closeTour()">Atla</button><button class="quick-add" type="button" (click)="next()">{{step.action}} →</button></div></footer></div>
+  </section>
+</div>

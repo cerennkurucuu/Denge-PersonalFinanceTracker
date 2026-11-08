@@ -1,5 +1,6 @@
 @if (auth.loading) {
   <main class="auth-screen">
+    <button class="back-to-site text-button" type="button" (click)="back.emit()">← Denge ana sayfası</button>
     <div class="auth-card auth-loading-card">
       <span class="brand-mark" role="img" aria-label="Denge logosu"></span>
       <p>Güvenli oturum kontrol ediliyor…</p>
@@ -7,6 +8,7 @@
   </main>
 } @else {
   <main class="auth-screen">
+    <button class="back-to-site text-button" type="button" (click)="back.emit()">← Denge ana sayfası</button>
     <section class="auth-card">
       <span class="brand-mark" role="img" aria-label="Denge logosu"></span>
       <div class="eyebrow">KİŞİSEL FİNANSIN, SENİN KONTROLÜNDE</div>

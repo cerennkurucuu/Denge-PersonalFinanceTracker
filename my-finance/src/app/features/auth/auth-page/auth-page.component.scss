@@ -1,4 +1,6 @@
 .auth-screen { display: grid; min-height: 100vh; place-items: center; padding: 24px; background: var(--surface); }
+.auth-screen { position: relative; }
+.back-to-site { position:absolute; top:22px; left:24px; }
 .auth-card { width: min(100%, 440px); padding: 36px 34px 30px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: none; text-align: center; }
 .auth-card > .brand-mark { width: 116px; height: 70px; margin: 0 auto 20px; background-size: 335px auto; }
 .auth-card > .eyebrow { justify-content: center; }
@@ -16,4 +18,4 @@
 .auth-loading-card > .brand-mark { width: 54px; height: 42px; margin: 0; background-size: 166px auto; }
 .auth-loading-card p { font-size: .875rem; }
 
-@media (max-width: 560px) { .auth-card { padding: 32px 23px 25px; } }
+@media (max-width: 560px) { .auth-card { padding: 32px 23px 25px; } .back-to-site{top:14px;left:12px;font-size:.75rem;} }

@@ -15,6 +15,7 @@ export class AuthPageComponent implements AfterViewChecked {
   readonly auth = inject(AuthService);
   @ViewChild('googleButton') private googleButton?: ElementRef<HTMLDivElement>;
   @Output() signedIn = new EventEmitter<AuthUser>();
+  @Output() back = new EventEmitter<void>();
   mfaCode='';
   mfaSubmitting=false;
 

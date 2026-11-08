@@ -2,6 +2,7 @@
   <div class="breadcrumb">Kişisel alan <span>/</span> <strong>{{ pageTitle }}</strong></div>
   <div class="top-actions">
     <span class="today">{{ format.formatDate(format.currentDateForToday) }}</span>
+    <button class="icon-button help-button" type="button" (click)="help.emit()" aria-label="Bu ekranın kullanım kılavuzu" title="Yardım / kullanım kılavuzu">?</button>
     <button class="icon-button theme-toggle" (click)="themeToggle.emit()" [attr.aria-label]="dark?'Açık tema':'Koyu tema'">{{dark?'☼':'◐'}}</button>
     <button class="quick-add" (click)="newTransaction.emit()"><span>＋</span> Yeni işlem</button>
     <button class="outline-button logout-button" (click)="signOut.emit()">Çıkış yap</button>

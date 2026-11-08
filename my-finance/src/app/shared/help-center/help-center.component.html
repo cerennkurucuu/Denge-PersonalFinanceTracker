@@ -1,0 +1,11 @@
+<div class="help-backdrop" (click)="close.emit()" (keydown.escape)="close.emit()">
+  <aside class="help-drawer" role="dialog" aria-modal="true" [attr.aria-label]="guide.title + ' kullanım kılavuzu'" (click)="$event.stopPropagation()">
+    <header><div><span class="eyebrow">DENGE KILAVUZU</span><h2>{{guide.title}} nasıl kullanılır?</h2></div><button class="icon-button" type="button" aria-label="Kılavuzu kapat" (click)="close.emit()">×</button></header>
+    <p class="guide-summary">{{guide.summary}}</p>
+    <img class="guide-gif" [src]="'/assets/guides/' + guide.gif + '.gif'" [alt]="guide.title + ' ekranında temel kullanım adımlarını gösteren kısa animasyon'" loading="lazy">
+    <ol>@for(step of guide.steps;track step){<li>{{step}}</li>}</ol>
+    <p class="guide-note">{{guide.note}}</p>
+    <div class="guide-actions"><a class="outline-button" [href]="'/guides/' + guide.doc + '.html'" target="_blank" rel="noopener">Ayrıntılı yazılı kılavuz ↗</a><button class="text-button" type="button" (click)="tour.emit()">Ürün turunu başlat</button></div>
+    <a class="all-guides" href="/guides/index.html" target="_blank" rel="noopener">Tüm ekranların kılavuzları →</a>
+  </aside>
+</div>
